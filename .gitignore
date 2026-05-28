@@ -4,3 +4,10 @@ build/
 *.a
 sdk_release/
 build_sdk.sh
+android_demo/.gradle/
+android_demo/build/
+android_demo/local.properties
+android_demo/**/*.iml
+android_demo/.idea/
+android_demo/**/build/
+android_demo/**/.cxx/
