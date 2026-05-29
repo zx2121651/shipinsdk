@@ -13,6 +13,11 @@ static vfx::RenderThread* gRenderThread = nullptr;
 static std::shared_ptr<vfx::IRHI> gRHI = nullptr;
 static ANativeWindow* gWindow = nullptr;
 
+// Camera feed tracking
+static int gCameraTextureId = -1;
+static int gCameraWidth = 0;
+static int gCameraHeight = 0;
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject /* this */) {
     LOGI("Initializing VFX Engine...");
@@ -52,17 +57,48 @@ Java_com_vfx_core_VfxEngine_setSurface(JNIEnv* env, jobject /* this */, jobject 
                 gRHI->setWindow(gWindow);
 
                 if (gWindow) {
-                    // Simulate frame rendering update on the RenderThread
+                    // Force an initial clear frame
                     auto cmd = gRHI->createCommandBuffer();
                     cmd->begin();
-
-                    // The GLES implementation clears color to blue on setWindow,
-                    // swapBuffers will execute eglSwapBuffers.
                     gRHI->swapBuffers();
-
                     cmd->end();
                     cmd->submit();
                 }
+            }
+        });
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_vfx_core_VfxEngine_setCameraTexture(JNIEnv* env, jobject /* this */, jint textureId, jint width, jint height) {
+    LOGI("Camera texture registered ID: %d, Size: %dx%d", textureId, width, height);
+    gCameraTextureId = textureId;
+    gCameraWidth = width;
+    gCameraHeight = height;
+
+    if (gRenderThread) {
+        gRenderThread->postTask([textureId, width, height]() {
+            // In a real pipeline, the engine will create an OES ITexture representation
+            // wrapping this textureId and bind it to the shader pipeline.
+            LOGI("RenderThread: Ready to render Camera Texture %d", textureId);
+        });
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject /* this */) {
+    if (gRenderThread) {
+        gRenderThread->postTask([]() {
+            if (gRHI && gWindow) {
+                // 1. (Omitted) eglMakeCurrent
+                // 2. (Omitted) Update surface texture using OpenGL specific extension
+                // 3. (Omitted) Bind Pipeline and draw the camera OES texture to the screen buffer
+
+                auto cmd = gRHI->createCommandBuffer();
+                cmd->begin();
+                gRHI->swapBuffers();
+                cmd->end();
+                cmd->submit();
             }
         });
     }
@@ -78,7 +114,6 @@ Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstr
 
     if (gRenderThread) {
         gRenderThread->postTask([path]() {
-            // Placeholder: Initialize video encoder using Media3 / MediaCodec
             LOGI("RenderThread: Setup video encoder for %s", path.c_str());
         });
     }
@@ -89,7 +124,6 @@ Java_com_vfx_core_VfxEngine_stopRecording(JNIEnv* env, jobject /* this */) {
     LOGI("Stopping recording...");
     if (gRenderThread) {
         gRenderThread->postTask([]() {
-            // Placeholder: Finalize video file and export
             LOGI("RenderThread: Finalizing video export...");
         });
     }
@@ -101,7 +135,6 @@ Java_com_vfx_core_VfxEngine_destroy(JNIEnv* env, jobject /* this */) {
     if (gRenderThread) {
         gRenderThread->postTask([]() {
             if (gRHI) {
-                // Remove surface explicitly before shutdown
                 gRHI->setWindow(nullptr);
                 gRHI->shutdown();
                 gRHI = nullptr;
