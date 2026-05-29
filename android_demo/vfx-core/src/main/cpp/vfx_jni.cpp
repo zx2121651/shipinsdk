@@ -42,7 +42,8 @@ Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject obj) {
 
     gRenderThread->postTask([]() {
         if (!gRHI) {
-            gRHI = vfx::createRHI(vfx::RHIBackend::GLES);
+            // Request auto-detection: Will probe for Vulkan, fallback to GLES waterfall
+            gRHI = vfx::createRHI(vfx::RHIBackend::Auto);
             gRHI->initialize();
         }
     });

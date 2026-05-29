@@ -6,6 +6,7 @@
 namespace vfx {
 
 enum class RHIBackend {
+    Auto,       // Automatically detect best backend (Vulkan -> Metal -> GLES)
     Vulkan,
     Metal,
     GLES
@@ -55,6 +56,7 @@ public:
     virtual RHIBackend getBackendType() const = 0;
 };
 
+// Factory function
 std::shared_ptr<IRHI> createRHI(RHIBackend backend);
 
 } // namespace vfx

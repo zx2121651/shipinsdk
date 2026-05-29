@@ -3,13 +3,18 @@
 
 #ifdef __ANDROID__
 #include <EGL/egl.h>
-#include <GLES3/gl3.h>
-#include <GLES2/gl2.h>
+#include <EGL/eglext.h>
+#include <GLES3/gl32.h>
 #include <GLES2/gl2ext.h>
 #include <android/log.h>
 #define LOG_TAG "VFX_GLES"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+#ifndef EGL_CONTEXT_MINOR_VERSION_KHR
+#define EGL_CONTEXT_MINOR_VERSION_KHR 0x30FB
+#endif
+
 #else
 #define LOGI(...) do {} while(0)
 #define LOGE(...) do {} while(0)
@@ -32,6 +37,7 @@ typedef void* EGLNativeWindowType;
 #define EGL_RED_SIZE 0x3024
 #define EGL_NONE 0x3038
 #define EGL_CONTEXT_CLIENT_VERSION 0x3098
+#define EGL_CONTEXT_MINOR_VERSION_KHR 0x30FB
 #define EGL_OPENGL_ES2_BIT 0x0004
 #define EGL_OPENGL_ES3_BIT 0x0040
 
@@ -195,13 +201,14 @@ bool GLESRHI::setupOESPipeline() {
 }
 
 bool GLESRHI::initialize() {
-    LOGI("Initializing GLES RHI (EGL Context)...");
+    LOGI("Initializing GLES RHI (EGL Context Probing)...");
 
     EGLDisplay display = eglGetDisplay(nullptr);
     if (display == EGL_NO_DISPLAY) return false;
     if (eglInitialize(display, nullptr, nullptr) != EGL_TRUE) return false;
 
-    int attribs[] = {
+    // We only need one config that supports ES3 (which is compatible backward)
+    int configAttribs[] = {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8,
@@ -210,23 +217,49 @@ bool GLESRHI::initialize() {
 
     EGLConfig config;
     int numConfigs;
-    bool isGLES3 = true;
 
-    if (eglChooseConfig(display, attribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
-        attribs[1] = EGL_OPENGL_ES2_BIT;
-        isGLES3 = false;
-        if (eglChooseConfig(display, attribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
+    if (eglChooseConfig(display, configAttribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
+        LOGI("Hardware does not support ES3 config, falling back to ES2 Config.");
+        configAttribs[1] = EGL_OPENGL_ES2_BIT;
+        if (eglChooseConfig(display, configAttribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
+            LOGE("Failed to find compatible EGL configuration.");
             return false;
         }
     }
 
-    int contextAttribs[] = {
-        EGL_CONTEXT_CLIENT_VERSION, isGLES3 ? 3 : 2,
-        EGL_NONE
-    };
+    EGLContext context = EGL_NO_CONTEXT;
 
-    EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
-    if (context == EGL_NO_CONTEXT) return false;
+    // Waterfall probing for highest supported GLES Context Version
+    struct GLESVersion { int major; int minor; };
+    GLESVersion versionsToTry[] = { {3, 2}, {3, 1}, {3, 0}, {2, 0} };
+
+    for (const auto& ver : versionsToTry) {
+        int ctxAttribs[] = {
+            EGL_CONTEXT_CLIENT_VERSION, ver.major,
+            EGL_CONTEXT_MINOR_VERSION_KHR, ver.minor,
+            EGL_NONE
+        };
+
+        // For GLES 2.0 or standard GLES 3.0, we omit the MINOR_VERSION extension
+        // to avoid EGL_BAD_ATTRIBUTE on strict or older drivers
+        if (ver.major == 2 || (ver.major == 3 && ver.minor == 0)) {
+            ctxAttribs[2] = EGL_NONE;
+        }
+
+        context = eglCreateContext(display, config, EGL_NO_CONTEXT, ctxAttribs);
+
+        if (context != EGL_NO_CONTEXT) {
+            LOGI("Successfully initialized EGL Context for OpenGL ES %d.%d", ver.major, ver.minor);
+            break;
+        } else {
+            LOGI("Failed to initialize OpenGL ES %d.%d, trying lower version...", ver.major, ver.minor);
+        }
+    }
+
+    if (context == EGL_NO_CONTEXT) {
+        LOGE("Failed to create any GLES context.");
+        return false;
+    }
 
     m_eglDisplay = display;
     m_eglContext = context;
