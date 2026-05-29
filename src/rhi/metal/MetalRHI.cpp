@@ -17,21 +17,11 @@ public:
 
 class MetalPipelineState : public IPipelineState {};
 
-
-bool MetalRHI::initialize() {
-    std::cout << "Initializing Metal RHI..." << std::endl;
-    return true;
-}
-
-void MetalRHI::shutdown() {
-    std::cout << "Shutting down Metal RHI..." << std::endl;
-}
-
-void MetalRHI::setWindow(void* window) {
-}
-
-void MetalRHI::swapBuffers() {
-}
+bool MetalRHI::initialize() { return true; }
+void MetalRHI::shutdown() {}
+void MetalRHI::setWindow(void* window) {}
+void MetalRHI::swapBuffers() {}
+void MetalRHI::renderCameraOESTexture(int textureId, const float* transformMatrix) {}
 
 std::shared_ptr<ITexture> MetalRHI::createTexture(int width, int height) {
     return std::make_shared<MetalTexture>();

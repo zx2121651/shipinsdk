@@ -22,7 +22,7 @@ class PreviewComponent @JvmOverloads constructor(
 
     private val vfxEngine = VfxEngine()
     private val textureView = TextureView(context)
-    private lateinit var cameraExecutor: ExecutorService
+    private var cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     private var isCameraStarted = false
 
@@ -34,7 +34,12 @@ class PreviewComponent @JvmOverloads constructor(
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
                 // The main window surface for the engine to render INTO
                 vfxEngine.setSurface(Surface(surface))
-                startCamera()
+
+                // Request C++ to generate a real texture ID first
+                vfxEngine.onCameraSurfaceReady = { surfaceTexture ->
+                    startCamera(surfaceTexture)
+                }
+                vfxEngine.generateCameraTexture()
             }
 
             override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
@@ -46,11 +51,9 @@ class PreviewComponent @JvmOverloads constructor(
 
             override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
         }
-
-        cameraExecutor = Executors.newSingleThreadExecutor()
     }
 
-    private fun startCamera() {
+    private fun startCamera(surfaceTexture: SurfaceTexture) {
         if (isCameraStarted) return
 
         val lifecycleOwner = context as? LifecycleOwner
@@ -64,29 +67,19 @@ class PreviewComponent @JvmOverloads constructor(
         cameraProviderFuture.addListener({
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
 
-            // Setup CameraX Preview UseCase
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider { request ->
-                    // 1. Create a SurfaceTexture that acts as the sink for Camera frames
-                    // In a real engine, we'd generate a texture ID via GLES on the RenderThread first.
-                    // For demo integration, we'll let CameraX provide it via SurfaceTexture (mocking the ID).
 
-                    val surfaceTexture = SurfaceTexture(10) // Mock ID 10
                     surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
-
                     val surface = Surface(surfaceTexture)
 
-                    // We must notify our C++ engine about this camera texture
-                    vfxEngine.setCameraTexture(10, request.resolution.width, request.resolution.height)
-
-                    // Whenever camera updates the texture
                     surfaceTexture.setOnFrameAvailableListener {
                         vfxEngine.notifyCameraFrameAvailable()
                     }
 
                     request.provideSurface(surface, cameraExecutor) {
                         surface.release()
-                        surfaceTexture.release()
+                        // Don't release surfaceTexture here, the engine owns it
                     }
                 }
             }

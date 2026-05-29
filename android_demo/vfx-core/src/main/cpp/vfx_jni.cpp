@@ -1,7 +1,9 @@
 #include <jni.h>
 #include <string>
+#include <vector>
 #include <android/log.h>
 #include <android/native_window_jni.h>
+#include <GLES2/gl2.h>
 
 #include "vfx_engine/core/RenderThread.h"
 #include "vfx_engine/rhi/RHI.h"
@@ -18,9 +20,19 @@ static int gCameraTextureId = -1;
 static int gCameraWidth = 0;
 static int gCameraHeight = 0;
 
+// To store reference to JVM to trigger callbacks
+static JavaVM* gJvm = nullptr;
+static jobject gVfxEngineObj = nullptr;
+
 extern "C" JNIEXPORT void JNICALL
-Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject /* this */) {
+Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject obj) {
     LOGI("Initializing VFX Engine...");
+
+    env->GetJavaVM(&gJvm);
+    if(gVfxEngineObj) {
+        env->DeleteGlobalRef(gVfxEngineObj);
+    }
+    gVfxEngineObj = env->NewGlobalRef(obj);
 
     if (!gRenderThread) {
         gRenderThread = new vfx::RenderThread();
@@ -29,7 +41,6 @@ Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject /* this */) {
 
     gRenderThread->postTask([]() {
         if (!gRHI) {
-            // EGL context logic needs to run on the RenderThread
             gRHI = vfx::createRHI(vfx::RHIBackend::GLES);
             gRHI->initialize();
         }
@@ -38,26 +49,25 @@ Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject /* this */) {
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_vfx_core_VfxEngine_setSurface(JNIEnv* env, jobject /* this */, jobject surface) {
-    if (gWindow) {
-        ANativeWindow_release(gWindow);
-        gWindow = nullptr;
-    }
-
+    ANativeWindow* newWindow = nullptr;
     if (surface) {
-        gWindow = ANativeWindow_fromSurface(env, surface);
+        newWindow = ANativeWindow_fromSurface(env, surface);
         LOGI("Surface bound to VFX Engine.");
     } else {
         LOGI("Surface un-bound from VFX Engine.");
     }
 
     if (gRenderThread) {
-        gRenderThread->postTask([]() {
+        gRenderThread->postTask([newWindow]() {
             if (gRHI) {
-                // Bind window in RenderThread (makes EGL Context current with surface)
-                gRHI->setWindow(gWindow);
+                gRHI->setWindow(newWindow);
 
                 if (gWindow) {
-                    // Force an initial clear frame
+                    ANativeWindow_release(gWindow);
+                }
+                gWindow = newWindow;
+
+                if (gWindow) {
                     auto cmd = gRHI->createCommandBuffer();
                     cmd->begin();
                     gRHI->swapBuffers();
@@ -66,42 +76,70 @@ Java_com_vfx_core_VfxEngine_setSurface(JNIEnv* env, jobject /* this */, jobject 
                 }
             }
         });
+    } else {
+        if (newWindow) ANativeWindow_release(newWindow);
     }
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_vfx_core_VfxEngine_setCameraTexture(JNIEnv* env, jobject /* this */, jint textureId, jint width, jint height) {
-    LOGI("Camera texture registered ID: %d, Size: %dx%d", textureId, width, height);
-    gCameraTextureId = textureId;
-    gCameraWidth = width;
-    gCameraHeight = height;
-
-    if (gRenderThread) {
-        gRenderThread->postTask([textureId, width, height]() {
-            // In a real pipeline, the engine will create an OES ITexture representation
-            // wrapping this textureId and bind it to the shader pipeline.
-            LOGI("RenderThread: Ready to render Camera Texture %d", textureId);
-        });
-    }
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject /* this */) {
+Java_com_vfx_core_VfxEngine_generateCameraTexture(JNIEnv* env, jobject obj) {
     if (gRenderThread) {
         gRenderThread->postTask([]() {
-            if (gRHI && gWindow) {
-                // 1. (Omitted) eglMakeCurrent
-                // 2. (Omitted) Update surface texture using OpenGL specific extension
-                // 3. (Omitted) Bind Pipeline and draw the camera OES texture to the screen buffer
+            if (gRHI) {
+                // Generate a real OpenGL texture ID inside the EGL context thread
+                unsigned int textureId;
+                glGenTextures(1, &textureId);
+                gCameraTextureId = textureId;
 
-                auto cmd = gRHI->createCommandBuffer();
-                cmd->begin();
-                gRHI->swapBuffers();
-                cmd->end();
-                cmd->submit();
+                LOGI("Generated real Camera OES Texture ID: %d", textureId);
+
+                // Call back to Kotlin
+                JNIEnv* env;
+                if (gJvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
+                    jclass clazz = env->GetObjectClass(gVfxEngineObj);
+                    jmethodID methodId = env->GetMethodID(clazz, "onCameraTextureGenerated", "(I)V");
+                    if (methodId) {
+                        env->CallVoidMethod(gVfxEngineObj, methodId, textureId);
+                    }
+                    gJvm->DetachCurrentThread();
+                }
             }
         });
     }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj) {
+    if (!gRenderThread || gCameraTextureId < 0) return;
+
+    gRenderThread->postTask([]() {
+        if (gRHI && gWindow) {
+            // updateTexImage and getTransformMatrix must be called ON the EGL context thread
+            JNIEnv* jniEnv;
+            if (gJvm->AttachCurrentThread(&jniEnv, nullptr) == JNI_OK) {
+                jclass clazz = jniEnv->GetObjectClass(gVfxEngineObj);
+                jmethodID methodId = jniEnv->GetMethodID(clazz, "updateCameraTexture", "()[F");
+                if (methodId) {
+                    jfloatArray matrixObj = (jfloatArray)jniEnv->CallObjectMethod(gVfxEngineObj, methodId);
+                    if (matrixObj) {
+                        jfloat* matrixBody = jniEnv->GetFloatArrayElements(matrixObj, 0);
+
+                        gRHI->renderCameraOESTexture(gCameraTextureId, matrixBody);
+
+                        auto cmd = gRHI->createCommandBuffer();
+                        cmd->begin();
+                        gRHI->swapBuffers();
+                        cmd->end();
+                        cmd->submit();
+
+                        jniEnv->ReleaseFloatArrayElements(matrixObj, matrixBody, 0);
+                        jniEnv->DeleteLocalRef(matrixObj);
+                    }
+                }
+                gJvm->DetachCurrentThread();
+            }
+        }
+    });
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -109,8 +147,6 @@ Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstr
     const char *nativeString = env->GetStringUTFChars(outputPath, 0);
     std::string path(nativeString);
     env->ReleaseStringUTFChars(outputPath, nativeString);
-
-    LOGI("Starting recording to %s", path.c_str());
 
     if (gRenderThread) {
         gRenderThread->postTask([path]() {
@@ -121,7 +157,6 @@ Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstr
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_vfx_core_VfxEngine_stopRecording(JNIEnv* env, jobject /* this */) {
-    LOGI("Stopping recording...");
     if (gRenderThread) {
         gRenderThread->postTask([]() {
             LOGI("RenderThread: Finalizing video export...");
@@ -132,6 +167,12 @@ Java_com_vfx_core_VfxEngine_stopRecording(JNIEnv* env, jobject /* this */) {
 extern "C" JNIEXPORT void JNICALL
 Java_com_vfx_core_VfxEngine_destroy(JNIEnv* env, jobject /* this */) {
     LOGI("Destroying VFX Engine...");
+
+    if (gVfxEngineObj) {
+        env->DeleteGlobalRef(gVfxEngineObj);
+        gVfxEngineObj = nullptr;
+    }
+
     if (gRenderThread) {
         gRenderThread->postTask([]() {
             if (gRHI) {
@@ -139,13 +180,13 @@ Java_com_vfx_core_VfxEngine_destroy(JNIEnv* env, jobject /* this */) {
                 gRHI->shutdown();
                 gRHI = nullptr;
             }
+            if (gWindow) {
+                ANativeWindow_release(gWindow);
+                gWindow = nullptr;
+            }
         });
         gRenderThread->stop();
         delete gRenderThread;
         gRenderThread = nullptr;
-    }
-    if (gWindow) {
-        ANativeWindow_release(gWindow);
-        gWindow = nullptr;
     }
 }

@@ -43,6 +43,10 @@ public:
     // Present the backbuffer to the screen
     virtual void swapBuffers() = 0;
 
+    // Render an external camera texture (OES on Android)
+    // transformMatrix is a 4x4 column-major float array
+    virtual void renderCameraOESTexture(int textureId, const float* transformMatrix) = 0;
+
     virtual std::shared_ptr<ITexture> createTexture(int width, int height) = 0;
     virtual std::shared_ptr<ICommandBuffer> createCommandBuffer() = 0;
     virtual std::shared_ptr<IPipelineState> createPipelineState() = 0;

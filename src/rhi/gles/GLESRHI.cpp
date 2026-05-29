@@ -5,14 +5,15 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
 #include <android/log.h>
 #define LOG_TAG "VFX_GLES"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #else
 // Mock EGL types for standard C++ compilation without Android NDK
-#define LOGI(...) std::cout << __VA_ARGS__ << std::endl
-#define LOGE(...) std::cerr << __VA_ARGS__ << std::endl
+#define LOGI(...) do {} while(0)
+#define LOGE(...) do {} while(0)
 typedef void* EGLDisplay;
 typedef void* EGLContext;
 typedef void* EGLSurface;
@@ -33,7 +34,6 @@ typedef void* EGLNativeWindowType;
 #define EGL_NONE 0x3038
 #define EGL_CONTEXT_CLIENT_VERSION 0x3098
 
-// Mock GLES bits for non-Android builds
 #define EGL_OPENGL_ES2_BIT 0x0004
 #define EGL_OPENGL_ES3_BIT 0x0040
 
@@ -50,9 +50,53 @@ bool eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) { return true; }
 bool eglDestroySurface(EGLDisplay dpy, EGLSurface surface) { return true; }
 bool eglDestroyContext(EGLDisplay dpy, EGLContext ctx) { return true; }
 bool eglTerminate(EGLDisplay dpy) { return true; }
+
 void glClearColor(float r, float g, float b, float a) {}
 void glClear(unsigned int mask) {}
+void glViewport(int x, int y, int width, int height) {}
+
+unsigned int glCreateShader(unsigned int type) { return 1; }
+void glShaderSource(unsigned int shader, int count, const char** string, const int* length) {}
+void glCompileShader(unsigned int shader) {}
+void glGetShaderiv(unsigned int shader, unsigned int pname, int* params) { *params = 1; }
+void glGetShaderInfoLog(unsigned int shader, int bufSize, int* length, char* infoLog) {}
+void glDeleteShader(unsigned int shader) {}
+
+unsigned int glCreateProgram() { return 1; }
+void glAttachShader(unsigned int program, unsigned int shader) {}
+void glLinkProgram(unsigned int program) {}
+void glGetProgramiv(unsigned int program, unsigned int pname, int* params) { *params = 1; }
+void glUseProgram(unsigned int program) {}
+int glGetUniformLocation(unsigned int program, const char* name) { return 0; }
+int glGetAttribLocation(unsigned int program, const char* name) { return 0; }
+void glDeleteProgram(unsigned int program) {}
+
+void glGenBuffers(int n, unsigned int* buffers) {}
+void glBindBuffer(unsigned int target, unsigned int buffer) {}
+void glBufferData(unsigned int target, long size, const void* data, unsigned int usage) {}
+void glEnableVertexAttribArray(unsigned int index) {}
+void glVertexAttribPointer(unsigned int index, int size, unsigned int type, unsigned char normalized, int stride, const void* pointer) {}
+void glDisableVertexAttribArray(unsigned int index) {}
+
+void glActiveTexture(unsigned int texture) {}
+void glBindTexture(unsigned int target, unsigned int texture) {}
+void glUniformMatrix4fv(int location, int count, unsigned char transpose, const float* value) {}
+void glUniform1i(int location, int v0) {}
+void glDrawArrays(unsigned int mode, int first, int count) {}
+
 #define GL_COLOR_BUFFER_BIT 0x00004000
+#define GL_VERTEX_SHADER 0x8B31
+#define GL_FRAGMENT_SHADER 0x8B30
+#define GL_COMPILE_STATUS 0x8B81
+#define GL_LINK_STATUS 0x8B82
+#define GL_ARRAY_BUFFER 0x8892
+#define GL_STATIC_DRAW 0x88E4
+#define GL_FLOAT 0x1406
+#define GL_FALSE 0
+#define GL_TRUE 1
+#define GL_TEXTURE0 0x84C0
+#define GL_TEXTURE_EXTERNAL_OES 0x8D65
+#define GL_TRIANGLE_STRIP 0x0005
 #endif
 
 namespace vfx {
@@ -71,6 +115,44 @@ public:
 
 class GLESPipelineState : public IPipelineState {};
 
+static const char* OES_VERTEX_SHADER = R"(
+    attribute vec4 aPosition;
+    attribute vec4 aTexCoord;
+    uniform mat4 uTransformMatrix;
+    varying vec2 vTexCoord;
+    void main() {
+        gl_Position = aPosition;
+        vTexCoord = (uTransformMatrix * aTexCoord).xy;
+    }
+)";
+
+static const char* OES_FRAGMENT_SHADER = R"(
+    #extension GL_OES_EGL_image_external : require
+    precision mediump float;
+    varying vec2 vTexCoord;
+    uniform samplerExternalOES uTexture;
+    void main() {
+        gl_FragColor = texture2D(uTexture, vTexCoord);
+    }
+)";
+
+static unsigned int compileShader(unsigned int type, const char* source) {
+    unsigned int shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+
+    int success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+        LOGE("Shader compilation failed: %s", infoLog);
+        glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+
 GLESRHI::GLESRHI()
     : m_eglDisplay(nullptr),
       m_eglContext(nullptr),
@@ -82,27 +164,62 @@ GLESRHI::~GLESRHI() {
     shutdown();
 }
 
+bool GLESRHI::setupOESPipeline() {
+    unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, OES_VERTEX_SHADER);
+    unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, OES_FRAGMENT_SHADER);
+
+    if (!vertexShader || !fragmentShader) return false;
+
+    m_oesProgram = glCreateProgram();
+    glAttachShader(m_oesProgram, vertexShader);
+    glAttachShader(m_oesProgram, fragmentShader);
+    glLinkProgram(m_oesProgram);
+
+    int success;
+    glGetProgramiv(m_oesProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        LOGE("Program linking failed");
+        return false;
+    }
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    m_positionLocation = glGetAttribLocation(m_oesProgram, "aPosition");
+    m_texCoordLocation = glGetAttribLocation(m_oesProgram, "aTexCoord");
+    m_transformMatrixLocation = glGetUniformLocation(m_oesProgram, "uTransformMatrix");
+    m_textureLocation = glGetUniformLocation(m_oesProgram, "uTexture");
+
+    // Quad data: x, y, u, v
+    float vertices[] = {
+        -1.0f, -1.0f,  0.0f, 0.0f,
+         1.0f, -1.0f,  1.0f, 0.0f,
+        -1.0f,  1.0f,  0.0f, 1.0f,
+         1.0f,  1.0f,  1.0f, 1.0f
+    };
+
+    glGenBuffers(1, &m_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    return true;
+}
+
 bool GLESRHI::initialize() {
     LOGI("Initializing GLES RHI (EGL Context)...");
 
-    EGLDisplay display = eglGetDisplay(nullptr); // EGL_DEFAULT_DISPLAY
+    EGLDisplay display = eglGetDisplay(nullptr);
     if (display == EGL_NO_DISPLAY) {
         LOGE("eglGetDisplay failed.");
         return false;
     }
 
-    if (eglInitialize(display, nullptr, nullptr) != EGL_TRUE) {
-        LOGE("eglInitialize failed.");
-        return false;
-    }
+    if (eglInitialize(display, nullptr, nullptr) != EGL_TRUE) return false;
 
-    // Attempt GLES 3.0 first
     int attribs[] = {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_BLUE_SIZE, 8,
-        EGL_GREEN_SIZE, 8,
-        EGL_RED_SIZE, 8,
+        EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8,
         EGL_NONE
     };
 
@@ -111,14 +228,10 @@ bool GLESRHI::initialize() {
     bool isGLES3 = true;
 
     if (eglChooseConfig(display, attribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
-        LOGI("GLES 3.0 config not supported, falling back to GLES 2.0...");
-
-        // Fallback to GLES 2.0
+        LOGI("Falling back to GLES 2.0");
         attribs[1] = EGL_OPENGL_ES2_BIT;
         isGLES3 = false;
-
         if (eglChooseConfig(display, attribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
-            LOGE("eglChooseConfig failed for both GLES 3.0 and GLES 2.0.");
             return false;
         }
     }
@@ -129,49 +242,28 @@ bool GLESRHI::initialize() {
     };
 
     EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
-    if (context == EGL_NO_CONTEXT) {
-        LOGE("eglCreateContext failed.");
-        return false;
-    }
+    if (context == EGL_NO_CONTEXT) return false;
 
     m_eglDisplay = display;
     m_eglContext = context;
     m_eglConfig = config;
-
-    if (isGLES3) {
-        LOGI("Successfully initialized EGL Context for GLES 3.0.");
-    } else {
-        LOGI("Successfully initialized EGL Context for GLES 2.0.");
-    }
 
     return true;
 }
 
 void GLESRHI::shutdown() {
     LOGI("Shutting down GLES RHI...");
-
     EGLDisplay display = (EGLDisplay)m_eglDisplay;
     if (display != EGL_NO_DISPLAY) {
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-
-        if (m_eglSurface != EGL_NO_SURFACE) {
-            eglDestroySurface(display, (EGLSurface)m_eglSurface);
-            m_eglSurface = nullptr;
-        }
-
-        if (m_eglContext != EGL_NO_CONTEXT) {
-            eglDestroyContext(display, (EGLContext)m_eglContext);
-            m_eglContext = nullptr;
-        }
-
+        if (m_eglSurface != EGL_NO_SURFACE) eglDestroySurface(display, (EGLSurface)m_eglSurface);
+        if (m_eglContext != EGL_NO_CONTEXT) eglDestroyContext(display, (EGLContext)m_eglContext);
         eglTerminate(display);
-        m_eglDisplay = nullptr;
     }
 }
 
 void GLESRHI::setWindow(void* window) {
     EGLDisplay display = (EGLDisplay)m_eglDisplay;
-
     if (m_eglSurface != EGL_NO_SURFACE) {
         eglDestroySurface(display, (EGLSurface)m_eglSurface);
         m_eglSurface = nullptr;
@@ -184,18 +276,10 @@ void GLESRHI::setWindow(void* window) {
         void* nativeWindow = window;
 #endif
         m_eglSurface = eglCreateWindowSurface(display, (EGLConfig)m_eglConfig, nativeWindow, nullptr);
-
-        if (m_eglSurface == EGL_NO_SURFACE) {
-            LOGE("eglCreateWindowSurface failed.");
-            return;
+        if (m_eglSurface != EGL_NO_SURFACE) {
+            eglMakeCurrent(display, (EGLSurface)m_eglSurface, (EGLSurface)m_eglSurface, (EGLContext)m_eglContext);
+            setupOESPipeline(); // Setup pipeline when EGL context is current with the new surface
         }
-
-        if (eglMakeCurrent(display, (EGLSurface)m_eglSurface, (EGLSurface)m_eglSurface, (EGLContext)m_eglContext) != EGL_TRUE) {
-            LOGE("eglMakeCurrent failed.");
-        }
-
-        // Demo clear color setup
-        glClearColor(0.2f, 0.3f, 0.8f, 1.0f);
     } else {
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
@@ -203,9 +287,46 @@ void GLESRHI::setWindow(void* window) {
 
 void GLESRHI::swapBuffers() {
     if (m_eglDisplay != EGL_NO_DISPLAY && m_eglSurface != EGL_NO_SURFACE) {
-        glClear(GL_COLOR_BUFFER_BIT); // Test render
         eglSwapBuffers((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurface);
     }
+}
+
+void GLESRHI::renderCameraOESTexture(int textureId, const float* transformMatrix) {
+    if (!m_oesProgram || m_eglSurface == EGL_NO_SURFACE) return;
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(m_oesProgram);
+
+    // Bind texture
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, textureId);
+    glUniform1i(m_textureLocation, 0);
+
+    // Apply transform matrix from SurfaceTexture
+    glUniformMatrix4fv(m_transformMatrixLocation, 1, GL_FALSE, transformMatrix);
+
+    // Setup VBO
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+
+    // Position
+    glEnableVertexAttribArray(m_positionLocation);
+    glVertexAttribPointer(m_positionLocation, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+
+    // TexCoord
+    glEnableVertexAttribArray(m_texCoordLocation);
+    glVertexAttribPointer(m_texCoordLocation, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+    // Draw full screen quad
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glDisableVertexAttribArray(m_positionLocation);
+    glDisableVertexAttribArray(m_texCoordLocation);
+
+    // Unbind
+    glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0);
+    glUseProgram(0);
 }
 
 std::shared_ptr<ITexture> GLESRHI::createTexture(int width, int height) {

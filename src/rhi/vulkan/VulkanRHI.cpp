@@ -17,21 +17,11 @@ public:
 
 class VulkanPipelineState : public IPipelineState {};
 
-
-bool VulkanRHI::initialize() {
-    std::cout << "Initializing Vulkan RHI..." << std::endl;
-    return true;
-}
-
-void VulkanRHI::shutdown() {
-    std::cout << "Shutting down Vulkan RHI..." << std::endl;
-}
-
-void VulkanRHI::setWindow(void* window) {
-}
-
-void VulkanRHI::swapBuffers() {
-}
+bool VulkanRHI::initialize() { return true; }
+void VulkanRHI::shutdown() {}
+void VulkanRHI::setWindow(void* window) {}
+void VulkanRHI::swapBuffers() {}
+void VulkanRHI::renderCameraOESTexture(int textureId, const float* transformMatrix) {}
 
 std::shared_ptr<ITexture> VulkanRHI::createTexture(int width, int height) {
     return std::make_shared<VulkanTexture>();
