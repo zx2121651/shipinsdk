@@ -22,7 +22,7 @@ public:
     NdkVideoEncoder() {}
     ~NdkVideoEncoder() { stop(); }
 
-    bool start(const std::string& outputPath, int width, int height) override {
+    bool start(const std::string& outputPath, int width, int height, VideoCodecType requestedCodec) override {
         LOGI("Starting VideoEncoder (NDK), path: %s", outputPath.c_str());
         m_width = width;
         m_height = height;
@@ -37,8 +37,24 @@ public:
         close(fd);
         if (!m_muxer) return false;
 
+        const char* mimeType = (requestedCodec == VideoCodecType::H265) ? "video/hevc" : "video/avc";
+
+        m_codec = AMediaCodec_createEncoderByType(mimeType);
+        if (!m_codec && requestedCodec == VideoCodecType::H265) {
+            LOGI("H.265 (HEVC) encoder creation failed. Falling back to H.264 (AVC).");
+            mimeType = "video/avc";
+            m_codec = AMediaCodec_createEncoderByType(mimeType);
+        }
+
+        if (!m_codec) {
+            LOGE("Failed to create video codec for %s", mimeType);
+            return false;
+        }
+
+        LOGI("Successfully created codec for %s", mimeType);
+
         AMediaFormat* format = AMediaFormat_new();
-        AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, "video/avc");
+        AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, mimeType);
         AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_WIDTH, width);
         AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_HEIGHT, height);
         AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_BIT_RATE, 2000000);
@@ -46,13 +62,8 @@ public:
         AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_I_FRAME_INTERVAL, 1);
         AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_COLOR_FORMAT, 2130708361); // COLOR_FormatSurface
 
-        m_codec = AMediaCodec_createEncoderByType("video/avc");
-        if (!m_codec) {
-            AMediaFormat_delete(format);
-            return false;
-        }
-
         if (AMediaCodec_configure(m_codec, format, nullptr, nullptr, AMEDIACODEC_CONFIGURE_FLAG_ENCODE) != AMEDIA_OK) {
+            LOGE("Failed to configure codec");
             AMediaFormat_delete(format);
             return false;
         }
@@ -154,7 +165,7 @@ std::shared_ptr<VideoEncoder> VideoEncoder::create() {
 namespace vfx {
 class MockVideoEncoder : public VideoEncoder {
 public:
-    bool start(const std::string& outputPath, int width, int height) override { return true; }
+    bool start(const std::string& outputPath, int width, int height, VideoCodecType requestedCodec) override { return true; }
     void stop() override {}
     void drain() override {}
     void* getInputWindow() override { return nullptr; }

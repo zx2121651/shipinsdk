@@ -3,6 +3,11 @@ package com.vfx.core
 import android.graphics.SurfaceTexture
 import android.view.Surface
 
+enum class CodecType(val value: Int) {
+    H264(0),
+    H265(1)
+}
+
 class VfxEngine {
     companion object {
         init {
@@ -16,23 +21,23 @@ class VfxEngine {
     external fun init()
     external fun setSurface(surface: Surface?)
 
-    // Generates texture ID asynchronously on RenderThread
     external fun generateCameraTexture()
-
-    // Signals C++ to draw. C++ will call updateCameraTexture synchronously on its RenderThread.
     external fun notifyCameraFrameAvailable()
 
-    external fun startRecording(outputPath: String)
+    // Int corresponds to CodecType
+    external fun startRecording(outputPath: String, codecTypeInt: Int)
     external fun stopRecording()
     external fun destroy()
 
-    // Called from C++ RenderThread
+    fun startRecording(outputPath: String, codecType: CodecType = CodecType.H264) {
+        startRecording(outputPath, codecType.value)
+    }
+
     private fun onCameraTextureGenerated(textureId: Int) {
         cameraSurfaceTexture = SurfaceTexture(textureId)
         onCameraSurfaceReady?.invoke(cameraSurfaceTexture!!)
     }
 
-    // Called from C++ RenderThread to update frame and get matrix safely
     private fun updateCameraTexture(): FloatArray? {
         val st = cameraSurfaceTexture ?: return null
         st.updateTexImage()

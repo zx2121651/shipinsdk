@@ -136,19 +136,21 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstring outputPath) {
+Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstring outputPath, jint codecTypeInt) {
     const char *nativeString = env->GetStringUTFChars(outputPath, 0);
     std::string path(nativeString);
     env->ReleaseStringUTFChars(outputPath, nativeString);
 
+    vfx::VideoCodecType codecType = (codecTypeInt == 1) ? vfx::VideoCodecType::H265 : vfx::VideoCodecType::H264;
+
     if (gRenderThread) {
-        gRenderThread->postTask([path]() {
+        gRenderThread->postTask([path, codecType]() {
             if (!gVideoEncoder && gRHI) {
                 LOGI("RenderThread: Starting Video Encoder to %s", path.c_str());
                 gVideoEncoder = vfx::VideoEncoder::create();
 
                 // Typical HD camera resolution for testing
-                if (gVideoEncoder->start(path, 1280, 720)) {
+                if (gVideoEncoder->start(path, 1280, 720, codecType)) {
                     void* encoderWindow = gVideoEncoder->getInputWindow();
                     gRHI->setEncoderWindow(encoderWindow);
                 } else {

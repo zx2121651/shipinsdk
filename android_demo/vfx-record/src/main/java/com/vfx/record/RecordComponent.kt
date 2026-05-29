@@ -5,6 +5,7 @@ import android.util.AttributeSet
 import android.widget.Button
 import android.widget.LinearLayout
 import com.vfx.core.VfxEngine
+import com.vfx.core.CodecType
 import java.io.File
 
 class RecordComponent @JvmOverloads constructor(
@@ -17,7 +18,7 @@ class RecordComponent @JvmOverloads constructor(
 
     init {
         orientation = HORIZONTAL
-        recordButton.text = "Start Record"
+        recordButton.text = "Start Record (H.265)"
 
         recordButton.setOnClickListener {
             if (isRecording) {
@@ -36,7 +37,9 @@ class RecordComponent @JvmOverloads constructor(
 
     private fun startRecording() {
         val outputFile = File(context.cacheDir, "vfx_record_out.mp4")
-        vfxEngine?.startRecording(outputFile.absolutePath)
+
+        // Pass H.265 specifically
+        vfxEngine?.startRecording(outputFile.absolutePath, CodecType.H265)
 
         isRecording = true
         recordButton.text = "Stop Record"
@@ -46,6 +49,6 @@ class RecordComponent @JvmOverloads constructor(
         vfxEngine?.stopRecording()
 
         isRecording = false
-        recordButton.text = "Start Record"
+        recordButton.text = "Start Record (H.265)"
     }
 }
