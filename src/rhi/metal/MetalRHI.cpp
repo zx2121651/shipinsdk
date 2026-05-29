@@ -27,6 +27,12 @@ void MetalRHI::shutdown() {
     std::cout << "Shutting down Metal RHI..." << std::endl;
 }
 
+void MetalRHI::setWindow(void* window) {
+}
+
+void MetalRHI::swapBuffers() {
+}
+
 std::shared_ptr<ITexture> MetalRHI::createTexture(int width, int height) {
     return std::make_shared<MetalTexture>();
 }

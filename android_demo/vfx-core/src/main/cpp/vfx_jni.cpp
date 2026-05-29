@@ -24,6 +24,7 @@ Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject /* this */) {
 
     gRenderThread->postTask([]() {
         if (!gRHI) {
+            // EGL context logic needs to run on the RenderThread
             gRHI = vfx::createRHI(vfx::RHIBackend::GLES);
             gRHI->initialize();
         }
@@ -36,6 +37,7 @@ Java_com_vfx_core_VfxEngine_setSurface(JNIEnv* env, jobject /* this */, jobject 
         ANativeWindow_release(gWindow);
         gWindow = nullptr;
     }
+
     if (surface) {
         gWindow = ANativeWindow_fromSurface(env, surface);
         LOGI("Surface bound to VFX Engine.");
@@ -46,11 +48,21 @@ Java_com_vfx_core_VfxEngine_setSurface(JNIEnv* env, jobject /* this */, jobject 
     if (gRenderThread) {
         gRenderThread->postTask([]() {
             if (gRHI) {
-                // Simulate frame rendering update on the RenderThread
-                auto cmd = gRHI->createCommandBuffer();
-                cmd->begin();
-                cmd->end();
-                cmd->submit();
+                // Bind window in RenderThread (makes EGL Context current with surface)
+                gRHI->setWindow(gWindow);
+
+                if (gWindow) {
+                    // Simulate frame rendering update on the RenderThread
+                    auto cmd = gRHI->createCommandBuffer();
+                    cmd->begin();
+
+                    // The GLES implementation clears color to blue on setWindow,
+                    // swapBuffers will execute eglSwapBuffers.
+                    gRHI->swapBuffers();
+
+                    cmd->end();
+                    cmd->submit();
+                }
             }
         });
     }
@@ -89,6 +101,8 @@ Java_com_vfx_core_VfxEngine_destroy(JNIEnv* env, jobject /* this */) {
     if (gRenderThread) {
         gRenderThread->postTask([]() {
             if (gRHI) {
+                // Remove surface explicitly before shutdown
+                gRHI->setWindow(nullptr);
                 gRHI->shutdown();
                 gRHI = nullptr;
             }

@@ -4,8 +4,6 @@ project("vfx-core")
 set(CMAKE_CXX_STANDARD 20)
 
 # Import the existing C++ VFX engine SDK
-# Assuming it's compiled and installed or compiled from source.
-# For this demo, we'll compile it directly from the parent repository sources.
 set(VFX_ENGINE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../)
 
 file(GLOB_RECURSE CORE_SOURCES "${VFX_ENGINE_DIR}/src/core/*.cpp")
@@ -25,7 +23,17 @@ add_library(vfx-jni SHARED vfx_jni.cpp)
 
 find_library(log-lib log)
 find_library(android-lib android)
+find_library(egl-lib EGL)
+find_library(gles3-lib GLESv3)
 
+# Link SDK with EGL/GLES for Android
+target_link_libraries(vfx_engine
+    ${log-lib}
+    ${egl-lib}
+    ${gles3-lib}
+)
+
+# Link JNI bridge with Engine SDK
 target_link_libraries(vfx-jni
     vfx_engine
     ${log-lib}

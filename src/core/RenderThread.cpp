@@ -23,9 +23,8 @@ void RenderThread::stop() {
 }
 
 void RenderThread::postTask(std::function<void()> task) {
-    if (m_running) {
-        m_taskQueue.push(std::move(task));
-    }
+    // Only queue if it was started. But allow queueing when stopping to drain final shutdown tasks.
+    m_taskQueue.push(std::move(task));
 }
 
 void RenderThread::join() {
@@ -35,7 +34,8 @@ void RenderThread::join() {
 }
 
 void RenderThread::run() {
-    while (m_running) {
+    // Rely on TaskQueue::pop returning std::nullopt when stopped AND empty
+    while (true) {
         auto task = m_taskQueue.pop();
         if (task) {
             (*task)();

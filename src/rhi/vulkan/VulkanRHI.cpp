@@ -27,6 +27,12 @@ void VulkanRHI::shutdown() {
     std::cout << "Shutting down Vulkan RHI..." << std::endl;
 }
 
+void VulkanRHI::setWindow(void* window) {
+}
+
+void VulkanRHI::swapBuffers() {
+}
+
 std::shared_ptr<ITexture> VulkanRHI::createTexture(int width, int height) {
     return std::make_shared<VulkanTexture>();
 }

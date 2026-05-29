@@ -7,6 +7,8 @@ class VulkanRHI : public IRHI {
 public:
     bool initialize() override;
     void shutdown() override;
+    void setWindow(void* window) override;
+    void swapBuffers() override;
     std::shared_ptr<ITexture> createTexture(int width, int height) override;
     std::shared_ptr<ICommandBuffer> createCommandBuffer() override;
     std::shared_ptr<IPipelineState> createPipelineState() override;

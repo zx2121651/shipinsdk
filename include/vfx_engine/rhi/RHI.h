@@ -37,6 +37,12 @@ public:
     virtual bool initialize() = 0;
     virtual void shutdown() = 0;
 
+    // Set the native window (e.g., ANativeWindow* on Android, HWND on Windows)
+    virtual void setWindow(void* window) = 0;
+
+    // Present the backbuffer to the screen
+    virtual void swapBuffers() = 0;
+
     virtual std::shared_ptr<ITexture> createTexture(int width, int height) = 0;
     virtual std::shared_ptr<ICommandBuffer> createCommandBuffer() = 0;
     virtual std::shared_ptr<IPipelineState> createPipelineState() = 0;
