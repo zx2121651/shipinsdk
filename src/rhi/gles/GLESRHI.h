@@ -10,8 +10,16 @@ public:
 
     bool initialize() override;
     void shutdown() override;
+
     void setWindow(void* window) override;
+    void setEncoderWindow(void* window) override;
+
     void swapBuffers() override;
+    void swapEncoderBuffers() override;
+
+    void makeMainWindowCurrent() override;
+    void makeEncoderWindowCurrent() override;
+
     void renderCameraOESTexture(int textureId, const float* transformMatrix) override;
 
     std::shared_ptr<ITexture> createTexture(int width, int height) override;
@@ -25,8 +33,10 @@ private:
 
     void* m_eglDisplay;
     void* m_eglContext;
-    void* m_eglSurface;
     void* m_eglConfig;
+
+    void* m_eglSurfaceMain;
+    void* m_eglSurfaceEncoder;
 
     unsigned int m_oesProgram = 0;
     unsigned int m_vbo = 0;

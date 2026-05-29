@@ -37,15 +37,16 @@ public:
     virtual bool initialize() = 0;
     virtual void shutdown() = 0;
 
-    // Set the native window (e.g., ANativeWindow* on Android, HWND on Windows)
     virtual void setWindow(void* window) = 0;
+    virtual void setEncoderWindow(void* window) = 0;
 
-    // Present the backbuffer to the screen
     virtual void swapBuffers() = 0;
+    virtual void swapEncoderBuffers() = 0;
 
-    // Render an external camera texture (OES on Android)
-    // transformMatrix is a 4x4 column-major float array
     virtual void renderCameraOESTexture(int textureId, const float* transformMatrix) = 0;
+
+    virtual void makeMainWindowCurrent() = 0;
+    virtual void makeEncoderWindowCurrent() = 0;
 
     virtual std::shared_ptr<ITexture> createTexture(int width, int height) = 0;
     virtual std::shared_ptr<ICommandBuffer> createCommandBuffer() = 0;
@@ -54,7 +55,6 @@ public:
     virtual RHIBackend getBackendType() const = 0;
 };
 
-// Factory function
 std::shared_ptr<IRHI> createRHI(RHIBackend backend);
 
 } // namespace vfx

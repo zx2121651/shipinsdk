@@ -1,5 +1,4 @@
 #include "VulkanRHI.h"
-#include <iostream>
 
 namespace vfx {
 
@@ -20,7 +19,9 @@ class VulkanPipelineState : public IPipelineState {};
 bool VulkanRHI::initialize() { return true; }
 void VulkanRHI::shutdown() {}
 void VulkanRHI::setWindow(void* window) {}
+void VulkanRHI::setEncoderWindow(void* window) {}
 void VulkanRHI::swapBuffers() {}
+void VulkanRHI::swapEncoderBuffers() {}
 void VulkanRHI::renderCameraOESTexture(int textureId, const float* transformMatrix) {}
 
 std::shared_ptr<ITexture> VulkanRHI::createTexture(int width, int height) {

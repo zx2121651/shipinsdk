@@ -41,3 +41,6 @@ target_link_libraries(vfx-jni
     ${log-lib}
     ${android-lib}
 )
+
+find_library(mediandk-lib mediandk)
+target_link_libraries(vfx_engine ${mediandk-lib} android)

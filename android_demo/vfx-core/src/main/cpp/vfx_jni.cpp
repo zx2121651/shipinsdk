@@ -7,18 +7,19 @@
 
 #include "vfx_engine/core/RenderThread.h"
 #include "vfx_engine/rhi/RHI.h"
+#include "vfx_engine/media/VideoEncoder.h"
 
 #define LOG_TAG "VFX_JNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
 static vfx::RenderThread* gRenderThread = nullptr;
 static std::shared_ptr<vfx::IRHI> gRHI = nullptr;
+static std::shared_ptr<vfx::VideoEncoder> gVideoEncoder = nullptr;
+
 static ANativeWindow* gWindow = nullptr;
 
 // Camera feed tracking
 static int gCameraTextureId = -1;
-static int gCameraWidth = 0;
-static int gCameraHeight = 0;
 
 // To store reference to JVM to trigger callbacks
 static JavaVM* gJvm = nullptr;
@@ -53,8 +54,6 @@ Java_com_vfx_core_VfxEngine_setSurface(JNIEnv* env, jobject /* this */, jobject 
     if (surface) {
         newWindow = ANativeWindow_fromSurface(env, surface);
         LOGI("Surface bound to VFX Engine.");
-    } else {
-        LOGI("Surface un-bound from VFX Engine.");
     }
 
     if (gRenderThread) {
@@ -66,14 +65,6 @@ Java_com_vfx_core_VfxEngine_setSurface(JNIEnv* env, jobject /* this */, jobject 
                     ANativeWindow_release(gWindow);
                 }
                 gWindow = newWindow;
-
-                if (gWindow) {
-                    auto cmd = gRHI->createCommandBuffer();
-                    cmd->begin();
-                    gRHI->swapBuffers();
-                    cmd->end();
-                    cmd->submit();
-                }
             }
         });
     } else {
@@ -86,14 +77,10 @@ Java_com_vfx_core_VfxEngine_generateCameraTexture(JNIEnv* env, jobject obj) {
     if (gRenderThread) {
         gRenderThread->postTask([]() {
             if (gRHI) {
-                // Generate a real OpenGL texture ID inside the EGL context thread
                 unsigned int textureId;
                 glGenTextures(1, &textureId);
                 gCameraTextureId = textureId;
 
-                LOGI("Generated real Camera OES Texture ID: %d", textureId);
-
-                // Call back to Kotlin
                 JNIEnv* env;
                 if (gJvm->AttachCurrentThread(&env, nullptr) == JNI_OK) {
                     jclass clazz = env->GetObjectClass(gVfxEngineObj);
@@ -113,8 +100,7 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
     if (!gRenderThread || gCameraTextureId < 0) return;
 
     gRenderThread->postTask([]() {
-        if (gRHI && gWindow) {
-            // updateTexImage and getTransformMatrix must be called ON the EGL context thread
+        if (gRHI) {
             JNIEnv* jniEnv;
             if (gJvm->AttachCurrentThread(&jniEnv, nullptr) == JNI_OK) {
                 jclass clazz = jniEnv->GetObjectClass(gVfxEngineObj);
@@ -124,13 +110,20 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
                     if (matrixObj) {
                         jfloat* matrixBody = jniEnv->GetFloatArrayElements(matrixObj, 0);
 
-                        gRHI->renderCameraOESTexture(gCameraTextureId, matrixBody);
+                        // 1. Draw to Main Preview Window
+                        if (gWindow) {
+                            gRHI->makeMainWindowCurrent();
+                            gRHI->renderCameraOESTexture(gCameraTextureId, matrixBody);
+                            gRHI->swapBuffers();
+                        }
 
-                        auto cmd = gRHI->createCommandBuffer();
-                        cmd->begin();
-                        gRHI->swapBuffers();
-                        cmd->end();
-                        cmd->submit();
+                        // 2. Draw to Encoder Window (If recording)
+                        if (gVideoEncoder) {
+                            gRHI->makeEncoderWindowCurrent();
+                            gRHI->renderCameraOESTexture(gCameraTextureId, matrixBody);
+                            gVideoEncoder->notifyFrameReady(); // Tells encoder to grab pts and drain
+                            gRHI->swapEncoderBuffers();
+                        }
 
                         jniEnv->ReleaseFloatArrayElements(matrixObj, matrixBody, 0);
                         jniEnv->DeleteLocalRef(matrixObj);
@@ -150,7 +143,18 @@ Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstr
 
     if (gRenderThread) {
         gRenderThread->postTask([path]() {
-            LOGI("RenderThread: Setup video encoder for %s", path.c_str());
+            if (!gVideoEncoder && gRHI) {
+                LOGI("RenderThread: Starting Video Encoder to %s", path.c_str());
+                gVideoEncoder = vfx::VideoEncoder::create();
+
+                // Typical HD camera resolution for testing
+                if (gVideoEncoder->start(path, 1280, 720)) {
+                    void* encoderWindow = gVideoEncoder->getInputWindow();
+                    gRHI->setEncoderWindow(encoderWindow);
+                } else {
+                    gVideoEncoder = nullptr;
+                }
+            }
         });
     }
 }
@@ -159,7 +163,12 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_vfx_core_VfxEngine_stopRecording(JNIEnv* env, jobject /* this */) {
     if (gRenderThread) {
         gRenderThread->postTask([]() {
-            LOGI("RenderThread: Finalizing video export...");
+            if (gVideoEncoder && gRHI) {
+                LOGI("RenderThread: Stopping Video Encoder...");
+                gRHI->setEncoderWindow(nullptr); // Unbind encoder surface
+                gVideoEncoder->stop();
+                gVideoEncoder = nullptr;
+            }
         });
     }
 }
@@ -175,7 +184,12 @@ Java_com_vfx_core_VfxEngine_destroy(JNIEnv* env, jobject /* this */) {
 
     if (gRenderThread) {
         gRenderThread->postTask([]() {
+            if (gVideoEncoder) {
+                gVideoEncoder->stop();
+                gVideoEncoder = nullptr;
+            }
             if (gRHI) {
+                gRHI->setEncoderWindow(nullptr);
                 gRHI->setWindow(nullptr);
                 gRHI->shutdown();
                 gRHI = nullptr;
