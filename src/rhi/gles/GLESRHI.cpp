@@ -4,8 +4,15 @@
 #ifdef __ANDROID__
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+#include <GLES2/gl2.h>
+#include <android/log.h>
+#define LOG_TAG "VFX_GLES"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #else
 // Mock EGL types for standard C++ compilation without Android NDK
+#define LOGI(...) std::cout << __VA_ARGS__ << std::endl
+#define LOGE(...) std::cerr << __VA_ARGS__ << std::endl
 typedef void* EGLDisplay;
 typedef void* EGLContext;
 typedef void* EGLSurface;
@@ -17,10 +24,25 @@ typedef void* EGLNativeWindowType;
 #define EGL_TRUE 1
 #define EGL_FALSE 0
 #define EGL_SUCCESS 0x3000
+#define EGL_RENDERABLE_TYPE 0x3040
+#define EGL_SURFACE_TYPE 0x3033
+#define EGL_WINDOW_BIT 0x0004
+#define EGL_BLUE_SIZE 0x3022
+#define EGL_GREEN_SIZE 0x3023
+#define EGL_RED_SIZE 0x3024
+#define EGL_NONE 0x3038
+#define EGL_CONTEXT_CLIENT_VERSION 0x3098
+
+// Mock GLES bits for non-Android builds
+#define EGL_OPENGL_ES2_BIT 0x0004
+#define EGL_OPENGL_ES3_BIT 0x0040
 
 bool eglInitialize(EGLDisplay dpy, int* major, int* minor) { return true; }
 EGLDisplay eglGetDisplay(void* display_id) { return (EGLDisplay)1; }
-bool eglChooseConfig(EGLDisplay dpy, const int* attrib_list, EGLConfig* configs, int config_size, int* num_config) { return true; }
+bool eglChooseConfig(EGLDisplay dpy, const int* attrib_list, EGLConfig* configs, int config_size, int* num_config) {
+    if (num_config) *num_config = 1;
+    return true;
+}
 EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext share_context, const int* attrib_list) { return (EGLContext)1; }
 EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config, EGLNativeWindowType win, const int* attrib_list) { return (EGLSurface)1; }
 bool eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx) { return true; }
@@ -61,21 +83,21 @@ GLESRHI::~GLESRHI() {
 }
 
 bool GLESRHI::initialize() {
-    std::cout << "Initializing GLES RHI (EGL Context)..." << std::endl;
+    LOGI("Initializing GLES RHI (EGL Context)...");
 
     EGLDisplay display = eglGetDisplay(nullptr); // EGL_DEFAULT_DISPLAY
     if (display == EGL_NO_DISPLAY) {
-        std::cerr << "eglGetDisplay failed." << std::endl;
+        LOGE("eglGetDisplay failed.");
         return false;
     }
 
     if (eglInitialize(display, nullptr, nullptr) != EGL_TRUE) {
-        std::cerr << "eglInitialize failed." << std::endl;
+        LOGE("eglInitialize failed.");
         return false;
     }
 
-#ifdef __ANDROID__
-    const EGLint attribs[] = {
+    // Attempt GLES 3.0 first
+    int attribs[] = {
         EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_BLUE_SIZE, 8,
@@ -83,29 +105,32 @@ bool GLESRHI::initialize() {
         EGL_RED_SIZE, 8,
         EGL_NONE
     };
-#else
-    const int attribs[] = { 0 };
-#endif
 
     EGLConfig config;
     int numConfigs;
+    bool isGLES3 = true;
+
     if (eglChooseConfig(display, attribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
-        std::cerr << "eglChooseConfig failed." << std::endl;
-        return false;
+        LOGI("GLES 3.0 config not supported, falling back to GLES 2.0...");
+
+        // Fallback to GLES 2.0
+        attribs[1] = EGL_OPENGL_ES2_BIT;
+        isGLES3 = false;
+
+        if (eglChooseConfig(display, attribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
+            LOGE("eglChooseConfig failed for both GLES 3.0 and GLES 2.0.");
+            return false;
+        }
     }
 
-#ifdef __ANDROID__
-    const EGLint contextAttribs[] = {
-        EGL_CONTEXT_CLIENT_VERSION, 3,
+    int contextAttribs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, isGLES3 ? 3 : 2,
         EGL_NONE
     };
-#else
-    const int contextAttribs[] = { 0 };
-#endif
 
     EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, contextAttribs);
     if (context == EGL_NO_CONTEXT) {
-        std::cerr << "eglCreateContext failed." << std::endl;
+        LOGE("eglCreateContext failed.");
         return false;
     }
 
@@ -113,11 +138,17 @@ bool GLESRHI::initialize() {
     m_eglContext = context;
     m_eglConfig = config;
 
+    if (isGLES3) {
+        LOGI("Successfully initialized EGL Context for GLES 3.0.");
+    } else {
+        LOGI("Successfully initialized EGL Context for GLES 2.0.");
+    }
+
     return true;
 }
 
 void GLESRHI::shutdown() {
-    std::cout << "Shutting down GLES RHI..." << std::endl;
+    LOGI("Shutting down GLES RHI...");
 
     EGLDisplay display = (EGLDisplay)m_eglDisplay;
     if (display != EGL_NO_DISPLAY) {
@@ -155,12 +186,12 @@ void GLESRHI::setWindow(void* window) {
         m_eglSurface = eglCreateWindowSurface(display, (EGLConfig)m_eglConfig, nativeWindow, nullptr);
 
         if (m_eglSurface == EGL_NO_SURFACE) {
-            std::cerr << "eglCreateWindowSurface failed." << std::endl;
+            LOGE("eglCreateWindowSurface failed.");
             return;
         }
 
         if (eglMakeCurrent(display, (EGLSurface)m_eglSurface, (EGLSurface)m_eglSurface, (EGLContext)m_eglContext) != EGL_TRUE) {
-            std::cerr << "eglMakeCurrent failed." << std::endl;
+            LOGE("eglMakeCurrent failed.");
         }
 
         // Demo clear color setup

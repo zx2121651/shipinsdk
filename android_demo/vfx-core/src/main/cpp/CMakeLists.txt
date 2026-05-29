@@ -25,12 +25,14 @@ find_library(log-lib log)
 find_library(android-lib android)
 find_library(egl-lib EGL)
 find_library(gles3-lib GLESv3)
+find_library(gles2-lib GLESv2)
 
-# Link SDK with EGL/GLES for Android
+# Link SDK with EGL, GLES3 and GLES2 for dynamic runtime fallback on Android
 target_link_libraries(vfx_engine
     ${log-lib}
     ${egl-lib}
     ${gles3-lib}
+    ${gles2-lib}
 )
 
 # Link JNI bridge with Engine SDK
