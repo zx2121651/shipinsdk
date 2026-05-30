@@ -8,7 +8,7 @@ public:
     GLESRHI();
     ~GLESRHI() override;
 
-    bool initialize() override;
+    bool initialize(const HardwareCapabilities& caps) override;
     void shutdown() override;
 
     void setWindow(void* window) override;

@@ -26,8 +26,8 @@ static JavaVM* gJvm = nullptr;
 static jobject gVfxEngineObj = nullptr;
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject obj) {
-    LOGI("Initializing VFX Engine...");
+Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject obj, jint glesVersionHex, jboolean isVulkanSupported) {
+    LOGI("Initializing VFX Engine with hardware caps... GLES: %x, Vulkan: %d", glesVersionHex, isVulkanSupported);
 
     env->GetJavaVM(&gJvm);
     if(gVfxEngineObj) {
@@ -40,11 +40,15 @@ Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject obj) {
         gRenderThread->start();
     }
 
-    gRenderThread->postTask([]() {
+    vfx::HardwareCapabilities caps;
+    caps.glesVersionHex = glesVersionHex;
+    caps.isVulkanSupported = isVulkanSupported;
+
+    gRenderThread->postTask([caps]() {
         if (!gRHI) {
-            // Request auto-detection: Will probe for Vulkan, fallback to GLES waterfall
-            gRHI = vfx::createRHI(vfx::RHIBackend::Auto);
-            gRHI->initialize();
+            // Request auto-detection: Will probe for Vulkan, fallback to GLES waterfall using caps
+            gRHI = vfx::createRHI(vfx::RHIBackend::Auto, caps);
+            gRHI->initialize(caps);
         }
     });
 }

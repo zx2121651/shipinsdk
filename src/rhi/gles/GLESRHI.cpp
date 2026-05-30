@@ -200,16 +200,22 @@ bool GLESRHI::setupOESPipeline() {
     return true;
 }
 
-bool GLESRHI::initialize() {
-    LOGI("Initializing GLES RHI (EGL Context Probing)...");
+bool GLESRHI::initialize(const HardwareCapabilities& caps) {
+    LOGI("Initializing GLES RHI using precise hardware capabilities...");
 
     EGLDisplay display = eglGetDisplay(nullptr);
     if (display == EGL_NO_DISPLAY) return false;
     if (eglInitialize(display, nullptr, nullptr) != EGL_TRUE) return false;
 
-    // We only need one config that supports ES3 (which is compatible backward)
+    // Parse GLES Version from hex (e.g. 0x00030002 -> Major 3, Minor 2)
+    int majorVer = (caps.glesVersionHex >> 16) & 0xFFFF;
+    int minorVer = caps.glesVersionHex & 0xFFFF;
+
+    LOGI("Hardware reported GLES %d.%d", majorVer, minorVer);
+
+    // EGL configs just need ES2 or ES3 bit flag (ES3 flag supports 3.x)
     int configAttribs[] = {
-        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+        EGL_RENDERABLE_TYPE, (majorVer >= 3) ? EGL_OPENGL_ES3_BIT : EGL_OPENGL_ES2_BIT,
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
         EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8,
         EGL_NONE
@@ -217,49 +223,50 @@ bool GLESRHI::initialize() {
 
     EGLConfig config;
     int numConfigs;
-
     if (eglChooseConfig(display, configAttribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
-        LOGI("Hardware does not support ES3 config, falling back to ES2 Config.");
-        configAttribs[1] = EGL_OPENGL_ES2_BIT;
-        if (eglChooseConfig(display, configAttribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
-            LOGE("Failed to find compatible EGL configuration.");
-            return false;
-        }
-    }
-
-    EGLContext context = EGL_NO_CONTEXT;
-
-    // Waterfall probing for highest supported GLES Context Version
-    struct GLESVersion { int major; int minor; };
-    GLESVersion versionsToTry[] = { {3, 2}, {3, 1}, {3, 0}, {2, 0} };
-
-    for (const auto& ver : versionsToTry) {
-        int ctxAttribs[] = {
-            EGL_CONTEXT_CLIENT_VERSION, ver.major,
-            EGL_CONTEXT_MINOR_VERSION_KHR, ver.minor,
-            EGL_NONE
-        };
-
-        // For GLES 2.0 or standard GLES 3.0, we omit the MINOR_VERSION extension
-        // to avoid EGL_BAD_ATTRIBUTE on strict or older drivers
-        if (ver.major == 2 || (ver.major == 3 && ver.minor == 0)) {
-            ctxAttribs[2] = EGL_NONE;
-        }
-
-        context = eglCreateContext(display, config, EGL_NO_CONTEXT, ctxAttribs);
-
-        if (context != EGL_NO_CONTEXT) {
-            LOGI("Successfully initialized EGL Context for OpenGL ES %d.%d", ver.major, ver.minor);
-            break;
-        } else {
-            LOGI("Failed to initialize OpenGL ES %d.%d, trying lower version...", ver.major, ver.minor);
-        }
-    }
-
-    if (context == EGL_NO_CONTEXT) {
-        LOGE("Failed to create any GLES context.");
+        LOGE("Failed to find compatible EGL configuration.");
         return false;
     }
+
+    // Configure perfect context request
+    int ctxAttribs[] = {
+        EGL_CONTEXT_CLIENT_VERSION, majorVer,
+        EGL_CONTEXT_MINOR_VERSION_KHR, minorVer,
+        EGL_NONE
+    };
+
+    // Remove minor version KHR extension request if running standard GLES 3.0 or 2.0 to avoid EGL_BAD_ATTRIBUTE
+    if (majorVer == 2 || (majorVer == 3 && minorVer == 0)) {
+        ctxAttribs[2] = EGL_NONE;
+    }
+
+    EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, ctxAttribs);
+    if (context == EGL_NO_CONTEXT) {
+        LOGE("Failed to create exact GLES context. Trying graceful waterfall fallback.");
+
+        // Waterfall fallback in case OEM lied about OS version compatibility
+        struct GLESVersion { int major; int minor; };
+        GLESVersion versionsToTry[] = { {3, 2}, {3, 1}, {3, 0}, {2, 0} };
+
+        for (const auto& ver : versionsToTry) {
+            ctxAttribs[1] = ver.major;
+            ctxAttribs[3] = ver.minor;
+            if (ver.major == 2 || (ver.major == 3 && ver.minor == 0)) {
+                ctxAttribs[2] = EGL_NONE;
+            } else {
+                ctxAttribs[2] = EGL_CONTEXT_MINOR_VERSION_KHR;
+            }
+            context = eglCreateContext(display, config, EGL_NO_CONTEXT, ctxAttribs);
+            if (context != EGL_NO_CONTEXT) {
+                LOGI("Fallback success: EGL Context for GLES %d.%d", ver.major, ver.minor);
+                break;
+            }
+        }
+    } else {
+        LOGI("Successfully initialized EGL Context precisely matching hardware specification.");
+    }
+
+    if (context == EGL_NO_CONTEXT) return false;
 
     m_eglDisplay = display;
     m_eglContext = context;

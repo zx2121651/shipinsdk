@@ -16,7 +16,7 @@ public:
 
 class MetalPipelineState : public IPipelineState {};
 
-bool MetalRHI::initialize() { return true; }
+bool MetalRHI::initialize(const HardwareCapabilities& caps) { return true; }
 void MetalRHI::shutdown() {}
 void MetalRHI::setWindow(void* window) {}
 void MetalRHI::setEncoderWindow(void* window) {}

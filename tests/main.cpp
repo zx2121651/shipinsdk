@@ -1,6 +1,6 @@
-#include <chrono>
 #include <iostream>
 #include <cassert>
+#include <chrono>
 #include "vfx_engine/core/RenderThread.h"
 #include "vfx_engine/rhi/RHI.h"
 
@@ -24,7 +24,8 @@ int main() {
     renderThread.stop();
 
     // Test RHI Factory
-    auto rhi = vfx::createRHI(vfx::RHIBackend::Vulkan);
+    vfx::HardwareCapabilities caps;
+    auto rhi = vfx::createRHI(vfx::RHIBackend::Vulkan, caps);
     assert(rhi != nullptr);
     assert(rhi->getBackendType() == vfx::RHIBackend::Vulkan);
 

@@ -5,7 +5,7 @@ namespace vfx {
 
 class VulkanRHI : public IRHI {
 public:
-    bool initialize() override;
+    bool initialize(const HardwareCapabilities& caps) override;
     void shutdown() override;
     void setWindow(void* window) override;
     void setEncoderWindow(void* window) override;

@@ -1,6 +1,8 @@
 package com.vfx.preview
 
+import android.app.ActivityManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
 import android.util.AttributeSet
 import android.util.Log
@@ -28,14 +30,24 @@ class PreviewComponent @JvmOverloads constructor(
 
     init {
         addView(textureView)
-        vfxEngine.init()
+
+        // 1. Resolve Hardware Capabilities exactly like Google/Android samples do
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val configInfo = activityManager.deviceConfigurationInfo
+
+        val glesVersion = configInfo.reqGlEsVersion
+
+        val isVulkanSupported = context.packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)
+
+        Log.i("PreviewComponent", "Probed GLES Version: 0x${Integer.toHexString(glesVersion)}")
+        Log.i("PreviewComponent", "Probed Vulkan Support: $isVulkanSupported")
+
+        // 2. Initialize C++ Engine with verified specs
+        vfxEngine.init(glesVersion, isVulkanSupported)
 
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-                // The main window surface for the engine to render INTO
                 vfxEngine.setSurface(Surface(surface))
-
-                // Request C++ to generate a real texture ID first
                 vfxEngine.onCameraSurfaceReady = { surfaceTexture ->
                     startCamera(surfaceTexture)
                 }
@@ -57,10 +69,7 @@ class PreviewComponent @JvmOverloads constructor(
         if (isCameraStarted) return
 
         val lifecycleOwner = context as? LifecycleOwner
-        if (lifecycleOwner == null) {
-            Log.e("PreviewComponent", "Context is not a LifecycleOwner")
-            return
-        }
+        if (lifecycleOwner == null) return
 
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
 
@@ -69,7 +78,6 @@ class PreviewComponent @JvmOverloads constructor(
 
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider { request ->
-
                     surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
                     val surface = Surface(surfaceTexture)
 
@@ -79,7 +87,6 @@ class PreviewComponent @JvmOverloads constructor(
 
                     request.provideSurface(surface, cameraExecutor) {
                         surface.release()
-                        // Don't release surfaceTexture here, the engine owns it
                     }
                 }
             }

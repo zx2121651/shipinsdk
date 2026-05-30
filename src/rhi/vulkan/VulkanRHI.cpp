@@ -16,7 +16,7 @@ public:
 
 class VulkanPipelineState : public IPipelineState {};
 
-bool VulkanRHI::initialize() { return true; }
+bool VulkanRHI::initialize(const HardwareCapabilities& caps) { return true; }
 void VulkanRHI::shutdown() {}
 void VulkanRHI::setWindow(void* window) {}
 void VulkanRHI::setEncoderWindow(void* window) {}

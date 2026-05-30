@@ -6,10 +6,15 @@
 namespace vfx {
 
 enum class RHIBackend {
-    Auto,       // Automatically detect best backend (Vulkan -> Metal -> GLES)
+    Auto,
     Vulkan,
     Metal,
     GLES
+};
+
+struct HardwareCapabilities {
+    bool isVulkanSupported = false;
+    int glesVersionHex = 0x00020000; // Default to GLES 2.0
 };
 
 class ITexture {
@@ -35,7 +40,7 @@ class IRHI {
 public:
     virtual ~IRHI() = default;
 
-    virtual bool initialize() = 0;
+    virtual bool initialize(const HardwareCapabilities& caps) = 0;
     virtual void shutdown() = 0;
 
     virtual void setWindow(void* window) = 0;
@@ -57,6 +62,6 @@ public:
 };
 
 // Factory function
-std::shared_ptr<IRHI> createRHI(RHIBackend backend);
+std::shared_ptr<IRHI> createRHI(RHIBackend backend, const HardwareCapabilities& caps);
 
 } // namespace vfx

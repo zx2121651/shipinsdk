@@ -1,5 +1,6 @@
 package com.vfx.core
 
+import android.content.Context
 import android.graphics.SurfaceTexture
 import android.view.Surface
 
@@ -18,13 +19,15 @@ class VfxEngine {
     private var cameraSurfaceTexture: SurfaceTexture? = null
     var onCameraSurfaceReady: ((SurfaceTexture) -> Unit)? = null
 
-    external fun init()
+    // Passed down from ActivityManager.deviceConfigurationInfo.reqGlEsVersion
+    // e.g. 0x00030002 for GLES 3.2
+    external fun init(glesVersionHex: Int, isVulkanSupported: Boolean)
+
     external fun setSurface(surface: Surface?)
 
     external fun generateCameraTexture()
     external fun notifyCameraFrameAvailable()
 
-    // Int corresponds to CodecType
     external fun startRecording(outputPath: String, codecTypeInt: Int)
     external fun stopRecording()
     external fun destroy()
