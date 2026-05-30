@@ -57,7 +57,6 @@ Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject obj, jint glesVersionHex, 
             gRHI->initialize(caps);
             gGraphInitialized = false;
 
-            // Build the initial RenderGraph pipeline but DON'T initialize shaders yet (no surface)
             gRenderGraph = std::make_shared<vfx::RenderGraph>(gRHI);
         }
     });
@@ -85,8 +84,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_vfx_core_VfxEngine_generateCameraTexture(JNIEnv* env, jobject obj) {
     if (gRenderThread) {
         gRenderThread->postTask([]() {
-            if (gRHI && gThreadAttached) {
-                // Must make context current. Since setSurface is called before this, we rely on the main window.
+            if (gRHI && gThreadAttached && gVfxEngineObj) {
                 gRHI->makeMainWindowCurrent();
 
                 unsigned int textureId = 0;
@@ -116,11 +114,10 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
     if (!gRenderThread || gCameraTextureId < 0) return;
 
     gRenderThread->postTask([]() {
-        if (gRHI && gRenderGraph && gWindow && gThreadAttached) {
+        if (gRHI && gRenderGraph && gWindow && gThreadAttached && gVfxEngineObj) {
 
             gRHI->makeMainWindowCurrent();
 
-            // Lazy initialization of Shaders/Filters now that the context is guaranteed to be current
             if (!gGraphInitialized) {
                 gRenderGraph->addFilter(std::make_shared<vfx::OESCameraFilter>());
                 gRenderGraph->addFilter(std::make_shared<vfx::GrayscaleFilter>());
@@ -143,11 +140,12 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
                         ctx.width = gCameraWidth > 0 ? gCameraWidth : 1280;
                         ctx.height = gCameraHeight > 0 ? gCameraHeight : 720;
 
-                        // Execute Pipeline on Main UI Window
-                        gRenderGraph->execute(ctx);
-                        gRHI->swapBuffers();
+                        if (gWindow) {
+                            gRHI->makeMainWindowCurrent();
+                            gRenderGraph->execute(ctx);
+                            gRHI->swapBuffers();
+                        }
 
-                        // Execute Pipeline on Encoder Window
                         if (gVideoEncoder) {
                             gRHI->makeEncoderWindowCurrent();
                             gRenderGraph->execute(ctx);
@@ -175,6 +173,7 @@ Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstr
     if (gRenderThread) {
         gRenderThread->postTask([path, codecType]() {
             if (!gVideoEncoder && gRHI) {
+                LOGI("RenderThread: Starting Video Encoder to %s", path.c_str());
                 gVideoEncoder = vfx::VideoEncoder::create();
                 int w = gCameraWidth > 0 ? gCameraWidth : 1280;
                 int h = gCameraHeight > 0 ? gCameraHeight : 720;
@@ -193,6 +192,7 @@ Java_com_vfx_core_VfxEngine_stopRecording(JNIEnv* env, jobject /* this */) {
     if (gRenderThread) {
         gRenderThread->postTask([]() {
             if (gVideoEncoder && gRHI) {
+                LOGI("RenderThread: Stopping Video Encoder...");
                 gRHI->setEncoderWindow(nullptr);
                 gVideoEncoder->stop();
                 gVideoEncoder = nullptr;
@@ -203,10 +203,9 @@ Java_com_vfx_core_VfxEngine_stopRecording(JNIEnv* env, jobject /* this */) {
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_vfx_core_VfxEngine_destroy(JNIEnv* env, jobject /* this */) {
-    if (gVfxEngineObj) {
-        env->DeleteGlobalRef(gVfxEngineObj);
-        gVfxEngineObj = nullptr;
-    }
+    LOGI("Destroying VFX Engine...");
+
+    // Pass a copy of the JNIEnv to the RenderThread for clean JVM detachment.
     if (gRenderThread) {
         gRenderThread->postTask([]() {
             if (gRenderGraph) {
@@ -229,13 +228,27 @@ Java_com_vfx_core_VfxEngine_destroy(JNIEnv* env, jobject /* this */) {
                 gWindow = nullptr;
             }
 
+            // Cleanup JNI references safely on the RenderThread
             if (gThreadAttached && gJvm) {
+                JNIEnv* jniEnv;
+                if (gJvm->GetEnv((void**)&jniEnv, JNI_VERSION_1_6) == JNI_OK) {
+                    if (gVfxEngineObj) {
+                        jniEnv->DeleteGlobalRef(gVfxEngineObj);
+                        gVfxEngineObj = nullptr;
+                    }
+                }
                 gJvm->DetachCurrentThread();
                 gThreadAttached = false;
             }
         });
+
         gRenderThread->stop();
         delete gRenderThread;
         gRenderThread = nullptr;
+    } else {
+        if (gVfxEngineObj) {
+            env->DeleteGlobalRef(gVfxEngineObj);
+            gVfxEngineObj = nullptr;
+        }
     }
 }
