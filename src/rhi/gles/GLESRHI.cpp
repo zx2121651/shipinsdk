@@ -95,6 +95,7 @@ void glDrawArrays(unsigned int mode, int first, int count) {}
 #define GL_FLOAT 0x1406
 #define GL_FALSE 0
 #define GL_TEXTURE0 0x84C0
+#define GL_TEXTURE_2D 0x0DE1
 #define GL_TEXTURE_EXTERNAL_OES 0x8D65
 #define GL_TRIANGLE_STRIP 0x0005
 #endif
@@ -115,40 +116,6 @@ public:
 
 class GLESPipelineState : public IPipelineState {};
 
-static const char* OES_VERTEX_SHADER = R"(
-    attribute vec4 aPosition;
-    attribute vec4 aTexCoord;
-    uniform mat4 uTransformMatrix;
-    varying vec2 vTexCoord;
-    void main() {
-        gl_Position = aPosition;
-        vTexCoord = (uTransformMatrix * aTexCoord).xy;
-    }
-)";
-
-static const char* OES_FRAGMENT_SHADER = R"(
-    #extension GL_OES_EGL_image_external : require
-    precision mediump float;
-    varying vec2 vTexCoord;
-    uniform samplerExternalOES uTexture;
-    void main() {
-        gl_FragColor = texture2D(uTexture, vTexCoord);
-    }
-)";
-
-static unsigned int compileShader(unsigned int type, const char* source) {
-    unsigned int shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-    int success;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glDeleteShader(shader);
-        return 0;
-    }
-    return shader;
-}
-
 GLESRHI::GLESRHI()
     : m_eglDisplay(nullptr),
       m_eglContext(nullptr),
@@ -161,30 +128,8 @@ GLESRHI::~GLESRHI() {
     shutdown();
 }
 
-bool GLESRHI::setupOESPipeline() {
-    if (m_oesProgram != 0) return true;
-
-    unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, OES_VERTEX_SHADER);
-    unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, OES_FRAGMENT_SHADER);
-
-    if (!vertexShader || !fragmentShader) return false;
-
-    m_oesProgram = glCreateProgram();
-    glAttachShader(m_oesProgram, vertexShader);
-    glAttachShader(m_oesProgram, fragmentShader);
-    glLinkProgram(m_oesProgram);
-
-    int success;
-    glGetProgramiv(m_oesProgram, GL_LINK_STATUS, &success);
-    if (!success) return false;
-
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    m_positionLocation = glGetAttribLocation(m_oesProgram, "aPosition");
-    m_texCoordLocation = glGetAttribLocation(m_oesProgram, "aTexCoord");
-    m_transformMatrixLocation = glGetUniformLocation(m_oesProgram, "uTransformMatrix");
-    m_textureLocation = glGetUniformLocation(m_oesProgram, "uTexture");
+bool GLESRHI::setupVBO() {
+    if (m_vbo != 0) return true;
 
     float vertices[] = {
         -1.0f, -1.0f,  0.0f, 0.0f,
@@ -196,8 +141,88 @@ bool GLESRHI::setupOESPipeline() {
     glGenBuffers(1, &m_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
     return true;
+}
+
+unsigned int GLESRHI::compileShaderProgram(const char* vertexSource, const char* fragmentSource) {
+    auto compileShader = [](unsigned int type, const char* source) -> unsigned int {
+        unsigned int shader = glCreateShader(type);
+        glShaderSource(shader, 1, &source, nullptr);
+        glCompileShader(shader);
+        int success;
+        glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+        if (!success) {
+            glDeleteShader(shader);
+            return 0;
+        }
+        return shader;
+    };
+
+    unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
+    unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
+
+    if (!vertexShader || !fragmentShader) return 0;
+
+    unsigned int program = glCreateProgram();
+    glAttachShader(program, vertexShader);
+    glAttachShader(program, fragmentShader);
+    glLinkProgram(program);
+
+    int success;
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    if (!success) return 0;
+    return program;
+}
+
+void GLESRHI::deleteShaderProgram(unsigned int programId) {
+    if (programId > 0) glDeleteProgram(programId);
+}
+
+void GLESRHI::drawFullScreenQuad(unsigned int programId, int textureId, bool isOES, const float* transformMatrix) {
+    if (programId == 0) return;
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(programId);
+
+    int posLoc = glGetAttribLocation(programId, "aPosition");
+    int texLoc = glGetAttribLocation(programId, "aTexCoord");
+    int matLoc = glGetUniformLocation(programId, "uTransformMatrix");
+    int sampLoc = glGetUniformLocation(programId, "uTexture");
+
+    glActiveTexture(GL_TEXTURE0);
+    unsigned int target = isOES ? GL_TEXTURE_EXTERNAL_OES : GL_TEXTURE_2D;
+    glBindTexture(target, textureId);
+    glUniform1i(sampLoc, 0);
+
+    if (matLoc >= 0 && transformMatrix) {
+        glUniformMatrix4fv(matLoc, 1, GL_FALSE, transformMatrix);
+    }
+
+    setupVBO();
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+
+    if (posLoc >= 0) {
+        glEnableVertexAttribArray(posLoc);
+        glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    }
+
+    if (texLoc >= 0) {
+        glEnableVertexAttribArray(texLoc);
+        glVertexAttribPointer(texLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    }
+
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    if (posLoc >= 0) glDisableVertexAttribArray(posLoc);
+    if (texLoc >= 0) glDisableVertexAttribArray(texLoc);
+
+    glBindTexture(target, 0);
+    glUseProgram(0);
 }
 
 bool GLESRHI::initialize(const HardwareCapabilities& caps) {
@@ -207,13 +232,11 @@ bool GLESRHI::initialize(const HardwareCapabilities& caps) {
     if (display == EGL_NO_DISPLAY) return false;
     if (eglInitialize(display, nullptr, nullptr) != EGL_TRUE) return false;
 
-    // Parse GLES Version from hex (e.g. 0x00030002 -> Major 3, Minor 2)
     int majorVer = (caps.glesVersionHex >> 16) & 0xFFFF;
     int minorVer = caps.glesVersionHex & 0xFFFF;
 
     LOGI("Hardware reported GLES %d.%d", majorVer, minorVer);
 
-    // EGL configs just need ES2 or ES3 bit flag (ES3 flag supports 3.x)
     int configAttribs[] = {
         EGL_RENDERABLE_TYPE, (majorVer >= 3) ? EGL_OPENGL_ES3_BIT : EGL_OPENGL_ES2_BIT,
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -228,23 +251,18 @@ bool GLESRHI::initialize(const HardwareCapabilities& caps) {
         return false;
     }
 
-    // Configure perfect context request
     int ctxAttribs[] = {
         EGL_CONTEXT_CLIENT_VERSION, majorVer,
         EGL_CONTEXT_MINOR_VERSION_KHR, minorVer,
         EGL_NONE
     };
 
-    // Remove minor version KHR extension request if running standard GLES 3.0 or 2.0 to avoid EGL_BAD_ATTRIBUTE
     if (majorVer == 2 || (majorVer == 3 && minorVer == 0)) {
         ctxAttribs[2] = EGL_NONE;
     }
 
     EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, ctxAttribs);
     if (context == EGL_NO_CONTEXT) {
-        LOGE("Failed to create exact GLES context. Trying graceful waterfall fallback.");
-
-        // Waterfall fallback in case OEM lied about OS version compatibility
         struct GLESVersion { int major; int minor; };
         GLESVersion versionsToTry[] = { {3, 2}, {3, 1}, {3, 0}, {2, 0} };
 
@@ -300,8 +318,6 @@ void GLESRHI::setWindow(void* window) {
         void* nativeWindow = window;
 #endif
         m_eglSurfaceMain = eglCreateWindowSurface(display, (EGLConfig)m_eglConfig, nativeWindow, nullptr);
-        makeMainWindowCurrent();
-        setupOESPipeline();
     } else {
         eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     }
@@ -346,37 +362,6 @@ void GLESRHI::swapEncoderBuffers() {
     if (m_eglDisplay != EGL_NO_DISPLAY && m_eglSurfaceEncoder != EGL_NO_SURFACE) {
         eglSwapBuffers((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceEncoder);
     }
-}
-
-void GLESRHI::renderCameraOESTexture(int textureId, const float* transformMatrix) {
-    if (!m_oesProgram) return;
-
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    glUseProgram(m_oesProgram);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_EXTERNAL_OES, textureId);
-    glUniform1i(m_textureLocation, 0);
-
-    glUniformMatrix4fv(m_transformMatrixLocation, 1, GL_FALSE, transformMatrix);
-
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-
-    glEnableVertexAttribArray(m_positionLocation);
-    glVertexAttribPointer(m_positionLocation, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-
-    glEnableVertexAttribArray(m_texCoordLocation);
-    glVertexAttribPointer(m_texCoordLocation, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
-
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-    glDisableVertexAttribArray(m_positionLocation);
-    glDisableVertexAttribArray(m_texCoordLocation);
-
-    glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0);
-    glUseProgram(0);
 }
 
 std::shared_ptr<ITexture> GLESRHI::createTexture(int width, int height) {

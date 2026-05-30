@@ -22,7 +22,6 @@ void MetalRHI::setWindow(void* window) {}
 void MetalRHI::setEncoderWindow(void* window) {}
 void MetalRHI::swapBuffers() {}
 void MetalRHI::swapEncoderBuffers() {}
-void MetalRHI::renderCameraOESTexture(int textureId, const float* transformMatrix) {}
 
 std::shared_ptr<ITexture> MetalRHI::createTexture(int width, int height) {
     return std::make_shared<MetalTexture>();

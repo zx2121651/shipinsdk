@@ -11,9 +11,12 @@ public:
     void setEncoderWindow(void* window) override;
     void swapBuffers() override;
     void swapEncoderBuffers() override;
-    void renderCameraOESTexture(int textureId, const float* transformMatrix) override;
     void makeMainWindowCurrent() override {}
     void makeEncoderWindowCurrent() override {}
+
+    unsigned int compileShaderProgram(const char* vertexSource, const char* fragmentSource) override { return 0; }
+    void deleteShaderProgram(unsigned int programId) override {}
+    void drawFullScreenQuad(unsigned int programId, int textureId, bool isOES, const float* transformMatrix) override {}
 
     std::shared_ptr<ITexture> createTexture(int width, int height) override;
     std::shared_ptr<ICommandBuffer> createCommandBuffer() override;

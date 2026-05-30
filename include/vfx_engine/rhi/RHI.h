@@ -14,7 +14,7 @@ enum class RHIBackend {
 
 struct HardwareCapabilities {
     bool isVulkanSupported = false;
-    int glesVersionHex = 0x00020000; // Default to GLES 2.0
+    int glesVersionHex = 0x00020000;
 };
 
 class ITexture {
@@ -49,10 +49,14 @@ public:
     virtual void swapBuffers() = 0;
     virtual void swapEncoderBuffers() = 0;
 
-    virtual void renderCameraOESTexture(int textureId, const float* transformMatrix) = 0;
-
     virtual void makeMainWindowCurrent() = 0;
     virtual void makeEncoderWindowCurrent() = 0;
+
+    // Generic drawing utility (replaces hardcoded OES logic)
+    // In a mature engine this would be part of ICommandBuffer. For now we expose a direct RHI call for Filter migration.
+    virtual unsigned int compileShaderProgram(const char* vertexSource, const char* fragmentSource) = 0;
+    virtual void deleteShaderProgram(unsigned int programId) = 0;
+    virtual void drawFullScreenQuad(unsigned int programId, int textureId, bool isOES, const float* transformMatrix) = 0;
 
     virtual std::shared_ptr<ITexture> createTexture(int width, int height) = 0;
     virtual std::shared_ptr<ICommandBuffer> createCommandBuffer() = 0;
@@ -61,7 +65,6 @@ public:
     virtual RHIBackend getBackendType() const = 0;
 };
 
-// Factory function
 std::shared_ptr<IRHI> createRHI(RHIBackend backend, const HardwareCapabilities& caps);
 
 } // namespace vfx
