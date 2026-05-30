@@ -46,7 +46,8 @@ void OESCameraFilter::release() {
 
 void OESCameraFilter::process(RenderContext& context) {
     if (m_rhi && m_programId != 0 && context.inputTextureId >= 0) {
-        // Draw the camera frame as a full screen quad
+        // Draw the camera frame.
+        // isOES = true, because the input texture is a CameraX GL_TEXTURE_EXTERNAL_OES.
         m_rhi->drawFullScreenQuad(m_programId, context.inputTextureId, true, context.transformMatrix);
     }
 }

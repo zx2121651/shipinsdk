@@ -108,6 +108,7 @@ void glDrawArrays(unsigned int mode, int first, int count) {}
 #define GL_STATIC_DRAW 0x88E4
 #define GL_FLOAT 0x1406
 #define GL_FALSE 0
+#define GL_TRUE 1
 #define GL_TEXTURE0 0x84C0
 #define GL_TEXTURE_2D 0x0DE1
 #define GL_TEXTURE_EXTERNAL_OES 0x8D65
@@ -173,6 +174,7 @@ GLESRHI::~GLESRHI() {
 bool GLESRHI::setupVBO() {
     if (m_vbo != 0) return true;
 
+    // Flipped V axis to map FBO textures correctly onto standard Android UI spaces
     float vertices[] = {
         -1.0f, -1.0f,  0.0f, 0.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
@@ -183,6 +185,9 @@ bool GLESRHI::setupVBO() {
     glGenBuffers(1, &m_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+    // Explicitly unbind after creation
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
     return true;
 }
 
@@ -224,11 +229,9 @@ void GLESRHI::deleteShaderProgram(unsigned int programId) {
 }
 
 void GLESRHI::drawFullScreenQuad(unsigned int programId, int textureId, bool isOES, const float* transformMatrix) {
-    if (programId == 0) return;
+    if (programId == 0 || textureId < 0) return;
 
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
+    // Use program FIRST before querying uniforms
     glUseProgram(programId);
 
     int posLoc = glGetAttribLocation(programId, "aPosition");
@@ -239,10 +242,24 @@ void GLESRHI::drawFullScreenQuad(unsigned int programId, int textureId, bool isO
     glActiveTexture(GL_TEXTURE0);
     unsigned int target = isOES ? GL_TEXTURE_EXTERNAL_OES : GL_TEXTURE_2D;
     glBindTexture(target, textureId);
-    glUniform1i(sampLoc, 0);
 
-    if (matLoc >= 0 && transformMatrix) {
-        glUniformMatrix4fv(matLoc, 1, GL_FALSE, transformMatrix);
+    if (sampLoc >= 0) {
+        glUniform1i(sampLoc, 0);
+    }
+
+    if (matLoc >= 0) {
+        if (transformMatrix) {
+            glUniformMatrix4fv(matLoc, 1, GL_FALSE, transformMatrix);
+        } else {
+            // Identity matrix for standard 2D textures
+            float identity[16] = {
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                0, 0, 0, 1
+            };
+            glUniformMatrix4fv(matLoc, 1, GL_FALSE, identity);
+        }
     }
 
     setupVBO();
@@ -260,14 +277,18 @@ void GLESRHI::drawFullScreenQuad(unsigned int programId, int textureId, bool isO
 
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
+    // CRITICAL: State Isolation cleanup to prevent black screen / bleeding across passes
     if (posLoc >= 0) glDisableVertexAttribArray(posLoc);
     if (texLoc >= 0) glDisableVertexAttribArray(texLoc);
 
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindTexture(target, 0);
     glUseProgram(0);
 }
 
 std::shared_ptr<IRenderTarget> GLESRHI::createRenderTarget(int width, int height) {
+    if (width <= 0 || height <= 0) return nullptr;
+
     auto target = std::make_shared<GLESRenderTarget>();
     target->width = width;
     target->height = height;
@@ -287,10 +308,14 @@ std::shared_ptr<IRenderTarget> GLESRHI::createRenderTarget(int width, int height
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         LOGE("FBO Creation failed!");
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, 0);
         return nullptr;
     }
 
+    // Clean up state
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
     return target;
 }
 
@@ -299,11 +324,15 @@ void GLESRHI::bindRenderTarget(std::shared_ptr<IRenderTarget> target) {
     auto glesTarget = std::static_pointer_cast<GLESRenderTarget>(target);
     glBindFramebuffer(GL_FRAMEBUFFER, glesTarget->fboId);
     glViewport(0, 0, glesTarget->width, glesTarget->height);
+
+    // Clear the FBO color attachment to transparent black before rendering the pass
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
 }
 
 void GLESRHI::unbindRenderTarget() {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // Restore default viewport based on current active EGLSurface
+    // Restore default viewport based on current active physical EGLSurface
     if (m_currentViewportWidth > 0 && m_currentViewportHeight > 0) {
         glViewport(0, 0, m_currentViewportWidth, m_currentViewportHeight);
     }

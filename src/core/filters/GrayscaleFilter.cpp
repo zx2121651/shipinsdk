@@ -2,7 +2,6 @@
 
 namespace vfx {
 
-// Simple generic vertex shader
 static const char* VERTEX_SHADER = R"(
     attribute vec4 aPosition;
     attribute vec4 aTexCoord;
@@ -46,8 +45,8 @@ void GrayscaleFilter::release() {
 
 void GrayscaleFilter::process(RenderContext& context) {
     if (m_rhi && m_programId != 0 && context.inputTextureId >= 0) {
-        // Draw the input texture applying grayscale filter
-        // Note: isOES is false because this filter operates on standard 2D textures output by previous passes
+        // Draw applying grayscale filter.
+        // isOES = false, because the input texture comes from the previous FBO, which is a standard GL_TEXTURE_2D.
         m_rhi->drawFullScreenQuad(m_programId, context.inputTextureId, false, nullptr);
     }
 }
