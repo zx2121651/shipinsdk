@@ -8,12 +8,12 @@
 #include "vfx_engine/core/RenderThread.h"
 #include "vfx_engine/core/RenderGraph.h"
 #include "vfx_engine/core/filters/OESCameraFilter.h"
+#include "vfx_engine/core/filters/GrayscaleFilter.h"
 #include "vfx_engine/rhi/RHI.h"
 #include "vfx_engine/media/VideoEncoder.h"
 
 #define LOG_TAG "VFX_JNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static vfx::RenderThread* gRenderThread = nullptr;
 static std::shared_ptr<vfx::IRHI> gRHI = nullptr;
@@ -22,10 +22,13 @@ static std::shared_ptr<vfx::VideoEncoder> gVideoEncoder = nullptr;
 
 static ANativeWindow* gWindow = nullptr;
 static int gCameraTextureId = -1;
+static int gCameraWidth = 0;
+static int gCameraHeight = 0;
 
 static JavaVM* gJvm = nullptr;
 static jobject gVfxEngineObj = nullptr;
 static bool gThreadAttached = false;
+static bool gGraphInitialized = false;
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject obj, jint glesVersionHex, jboolean isVulkanSupported) {
@@ -44,7 +47,6 @@ Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject obj, jint glesVersionHex, 
     caps.isVulkanSupported = isVulkanSupported;
 
     gRenderThread->postTask([caps]() {
-        // Attach the RenderThread to the JVM ONCE.
         JNIEnv* jniEnv;
         if (gJvm->AttachCurrentThread(&jniEnv, nullptr) == JNI_OK) {
             gThreadAttached = true;
@@ -53,11 +55,10 @@ Java_com_vfx_core_VfxEngine_init(JNIEnv* env, jobject obj, jint glesVersionHex, 
         if (!gRHI) {
             gRHI = vfx::createRHI(vfx::RHIBackend::Auto, caps);
             gRHI->initialize(caps);
+            gGraphInitialized = false;
 
-            // RenderGraph is disabled for multi-pass until FBOs are implemented.
-            // Using a single OES filter for now to render the camera frame.
+            // Build the initial RenderGraph pipeline but DON'T initialize shaders yet (no surface)
             gRenderGraph = std::make_shared<vfx::RenderGraph>(gRHI);
-            gRenderGraph->addFilter(std::make_shared<vfx::OESCameraFilter>());
         }
     });
 }
@@ -85,9 +86,7 @@ Java_com_vfx_core_VfxEngine_generateCameraTexture(JNIEnv* env, jobject obj) {
     if (gRenderThread) {
         gRenderThread->postTask([]() {
             if (gRHI && gThreadAttached) {
-                // IMPORTANT: Must make a context current before calling GL commands!
-                // If there's no main window yet, this requires an offscreen PBuffer,
-                // but since setSurface runs before this in Android lifecycle, we enforce it here:
+                // Must make context current. Since setSurface is called before this, we rely on the main window.
                 gRHI->makeMainWindowCurrent();
 
                 unsigned int textureId = 0;
@@ -99,10 +98,17 @@ Java_com_vfx_core_VfxEngine_generateCameraTexture(JNIEnv* env, jobject obj) {
                     jclass clazz = jniEnv->GetObjectClass(gVfxEngineObj);
                     jmethodID methodId = jniEnv->GetMethodID(clazz, "onCameraTextureGenerated", "(I)V");
                     if (methodId) jniEnv->CallVoidMethod(gVfxEngineObj, methodId, textureId);
+                    jniEnv->DeleteLocalRef(clazz);
                 }
             }
         });
     }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_vfx_core_VfxEngine_setCameraTextureSize(JNIEnv* env, jobject obj, jint width, jint height) {
+    gCameraWidth = width;
+    gCameraHeight = height;
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -112,15 +118,20 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
     gRenderThread->postTask([]() {
         if (gRHI && gRenderGraph && gWindow && gThreadAttached) {
 
-            // 1. MUST MAKE CONTEXT CURRENT BEFORE updateTexImage()
             gRHI->makeMainWindowCurrent();
+
+            // Lazy initialization of Shaders/Filters now that the context is guaranteed to be current
+            if (!gGraphInitialized) {
+                gRenderGraph->addFilter(std::make_shared<vfx::OESCameraFilter>());
+                gRenderGraph->addFilter(std::make_shared<vfx::GrayscaleFilter>());
+                gGraphInitialized = true;
+            }
 
             JNIEnv* jniEnv;
             if (gJvm->GetEnv((void**)&jniEnv, JNI_VERSION_1_6) == JNI_OK) {
                 jclass clazz = jniEnv->GetObjectClass(gVfxEngineObj);
                 jmethodID methodId = jniEnv->GetMethodID(clazz, "updateCameraTexture", "()[F");
                 if (methodId) {
-                    // This calls SurfaceTexture.updateTexImage() safely now.
                     jfloatArray matrixObj = (jfloatArray)jniEnv->CallObjectMethod(gVfxEngineObj, methodId);
                     if (matrixObj) {
                         jfloat* matrixBody = jniEnv->GetFloatArrayElements(matrixObj, 0);
@@ -129,6 +140,8 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
                         ctx.rhi = gRHI;
                         ctx.inputTextureId = gCameraTextureId;
                         ctx.transformMatrix = matrixBody;
+                        ctx.width = gCameraWidth > 0 ? gCameraWidth : 1280;
+                        ctx.height = gCameraHeight > 0 ? gCameraHeight : 720;
 
                         // Execute Pipeline on Main UI Window
                         gRenderGraph->execute(ctx);
@@ -146,6 +159,7 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
                         jniEnv->DeleteLocalRef(matrixObj);
                     }
                 }
+                jniEnv->DeleteLocalRef(clazz);
             }
         }
     });
@@ -162,7 +176,9 @@ Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstr
         gRenderThread->postTask([path, codecType]() {
             if (!gVideoEncoder && gRHI) {
                 gVideoEncoder = vfx::VideoEncoder::create();
-                if (gVideoEncoder->start(path, 1280, 720, codecType)) {
+                int w = gCameraWidth > 0 ? gCameraWidth : 1280;
+                int h = gCameraHeight > 0 ? gCameraHeight : 720;
+                if (gVideoEncoder->start(path, w, h, codecType)) {
                     gRHI->setEncoderWindow(gVideoEncoder->getInputWindow());
                 } else {
                     gVideoEncoder = nullptr;
@@ -196,6 +212,7 @@ Java_com_vfx_core_VfxEngine_destroy(JNIEnv* env, jobject /* this */) {
             if (gRenderGraph) {
                 gRenderGraph->clearFilters();
                 gRenderGraph = nullptr;
+                gGraphInitialized = false;
             }
             if (gVideoEncoder) {
                 gVideoEncoder->stop();

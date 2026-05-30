@@ -23,6 +23,12 @@ public:
     virtual void* getNativeHandle() const = 0;
 };
 
+class IRenderTarget {
+public:
+    virtual ~IRenderTarget() = default;
+    virtual int getTextureId() const = 0;
+};
+
 class ICommandBuffer {
 public:
     virtual ~ICommandBuffer() = default;
@@ -52,11 +58,15 @@ public:
     virtual void makeMainWindowCurrent() = 0;
     virtual void makeEncoderWindowCurrent() = 0;
 
-    // Generic drawing utility (replaces hardcoded OES logic)
-    // In a mature engine this would be part of ICommandBuffer. For now we expose a direct RHI call for Filter migration.
+    // Shader primitives
     virtual unsigned int compileShaderProgram(const char* vertexSource, const char* fragmentSource) = 0;
     virtual void deleteShaderProgram(unsigned int programId) = 0;
     virtual void drawFullScreenQuad(unsigned int programId, int textureId, bool isOES, const float* transformMatrix) = 0;
+
+    // FBO Management
+    virtual std::shared_ptr<IRenderTarget> createRenderTarget(int width, int height) = 0;
+    virtual void bindRenderTarget(std::shared_ptr<IRenderTarget> target) = 0;
+    virtual void unbindRenderTarget() = 0; // Bind back to default window surface
 
     virtual std::shared_ptr<ITexture> createTexture(int width, int height) = 0;
     virtual std::shared_ptr<ICommandBuffer> createCommandBuffer() = 0;

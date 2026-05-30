@@ -24,6 +24,10 @@ public:
     void deleteShaderProgram(unsigned int programId) override;
     void drawFullScreenQuad(unsigned int programId, int textureId, bool isOES, const float* transformMatrix) override;
 
+    std::shared_ptr<IRenderTarget> createRenderTarget(int width, int height) override;
+    void bindRenderTarget(std::shared_ptr<IRenderTarget> target) override;
+    void unbindRenderTarget() override;
+
     std::shared_ptr<ITexture> createTexture(int width, int height) override;
     std::shared_ptr<ICommandBuffer> createCommandBuffer() override;
     std::shared_ptr<IPipelineState> createPipelineState() override;
@@ -41,6 +45,8 @@ private:
     void* m_eglSurfaceEncoder;
 
     unsigned int m_vbo = 0;
+    int m_currentViewportWidth = 0;
+    int m_currentViewportHeight = 0;
 };
 
 } // namespace vfx

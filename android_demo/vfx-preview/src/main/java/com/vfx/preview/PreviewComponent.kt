@@ -31,18 +31,11 @@ class PreviewComponent @JvmOverloads constructor(
     init {
         addView(textureView)
 
-        // 1. Resolve Hardware Capabilities exactly like Google/Android samples do
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val configInfo = activityManager.deviceConfigurationInfo
-
         val glesVersion = configInfo.reqGlEsVersion
-
         val isVulkanSupported = context.packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)
 
-        Log.i("PreviewComponent", "Probed GLES Version: 0x${Integer.toHexString(glesVersion)}")
-        Log.i("PreviewComponent", "Probed Vulkan Support: $isVulkanSupported")
-
-        // 2. Initialize C++ Engine with verified specs
         vfxEngine.init(glesVersion, isVulkanSupported)
 
         textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
@@ -78,6 +71,9 @@ class PreviewComponent @JvmOverloads constructor(
 
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider { request ->
+
+                    vfxEngine.setCameraTextureSize(request.resolution.width, request.resolution.height)
+
                     surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
                     val surface = Surface(surfaceTexture)
 

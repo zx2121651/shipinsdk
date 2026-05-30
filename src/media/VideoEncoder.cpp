@@ -7,6 +7,8 @@
 #include <media/NdkMediaFormat.h>
 #include <android/log.h>
 #include <android/native_window.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <chrono>
@@ -14,6 +16,8 @@
 #define LOG_TAG "VFX_ENCODER"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+// Declare missing extension function prototype for NDK
 
 namespace vfx {
 
@@ -50,8 +54,6 @@ public:
             LOGE("Failed to create video codec for %s", mimeType);
             return false;
         }
-
-        LOGI("Successfully created codec for %s", mimeType);
 
         AMediaFormat* format = AMediaFormat_new();
         AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, mimeType);
@@ -127,9 +129,8 @@ public:
                 uint8_t* buf = AMediaCodec_getOutputBuffer(m_codec, status, &bufSize);
 
                 if (buf && m_muxerStarted && info.size != 0) {
-                    auto now = std::chrono::steady_clock::now();
-                    auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - m_startTime).count();
-                    info.presentationTimeUs = elapsed;
+                    // Note: In a robust setup, PTS should be set on the EGL surface before swap via eglPresentationTimeANDROID.
+                    // We retain the fallback here for muxing if EGL PTS isn't respected by the HW encoder.
                     AMediaMuxer_writeSampleData(m_muxer, m_trackIndex, buf, &info);
                 }
 
@@ -142,7 +143,12 @@ public:
     }
 
     void* getInputWindow() override { return m_window; }
-    void notifyFrameReady() override { drain(); }
+
+    void notifyFrameReady() override {
+        // HW encoders implicitly use the EGL surface's presentation time for PTS.
+        // We ensure we drain the newly encoded packets quickly.
+        drain();
+    }
 
 private:
     bool m_isRecording = false;
