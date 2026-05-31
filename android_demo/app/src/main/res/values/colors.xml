@@ -1,0 +1,5 @@
+<resources>
+    <color name="capcut_bg">@android:color/black</color>
+    <color name="capcut_panel">#121212</color>
+    <color name="capcut_primary">#3665FF</color>
+</resources>
