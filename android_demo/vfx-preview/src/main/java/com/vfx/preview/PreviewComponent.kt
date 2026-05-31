@@ -4,106 +4,93 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
-import android.util.AttributeSet
 import android.util.Log
 import android.view.Surface
 import android.view.TextureView
-import android.widget.FrameLayout
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.LifecycleOwner
 import com.vfx.core.VfxEngine
-import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-class PreviewComponent @JvmOverloads constructor(
-    context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
-) : FrameLayout(context, attrs, defStyleAttr) {
+@Composable
+fun VfxPreviewView(
+    engine: VfxEngine,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
 
-    private val vfxEngine = VfxEngine()
-    private val textureView = TextureView(context)
-    private var cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
-
-    private var isCameraStarted = false
-
-    init {
-        addView(textureView)
-
+    // Init Engine
+    DisposableEffect(Unit) {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        val configInfo = activityManager.deviceConfigurationInfo
-        val glesVersion = configInfo.reqGlEsVersion
+        val glesVersion = activityManager.deviceConfigurationInfo.reqGlEsVersion
         val isVulkanSupported = context.packageManager.hasSystemFeature(PackageManager.FEATURE_VULKAN_HARDWARE_LEVEL)
+        engine.init(glesVersion, isVulkanSupported)
 
-        vfxEngine.init(glesVersion, isVulkanSupported)
-
-        textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
-                vfxEngine.setSurface(Surface(surface))
-                vfxEngine.onCameraSurfaceReady = { surfaceTexture ->
-                    startCamera(surfaceTexture)
-                }
-                vfxEngine.generateCameraTexture()
-            }
-
-            override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
-
-            override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
-                vfxEngine.setSurface(null)
-                return true
-            }
-
-            override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
+        onDispose {
+            cameraExecutor.shutdown()
+            engine.destroy()
         }
     }
 
-    private fun startCamera(surfaceTexture: SurfaceTexture) {
-        if (isCameraStarted) return
+    AndroidView(
+        modifier = modifier.fillMaxSize(),
+        factory = { ctx ->
+            TextureView(ctx).apply {
+                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                    override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+                        engine.setSurface(Surface(surface))
+                        engine.onCameraSurfaceReady = { surfaceTexture ->
+                            // Bind CameraX
+                            val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                            cameraProviderFuture.addListener({
+                                val cameraProvider = cameraProviderFuture.get()
+                                val preview = Preview.Builder().build().also {
+                                    it.setSurfaceProvider { request ->
+                                        engine.setCameraTextureSize(request.resolution.width, request.resolution.height)
+                                        surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
+                                        val cameraSurface = Surface(surfaceTexture)
 
-        val lifecycleOwner = context as? LifecycleOwner
-        if (lifecycleOwner == null) return
+                                        surfaceTexture.setOnFrameAvailableListener {
+                                            engine.notifyCameraFrameAvailable()
+                                        }
 
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+                                        request.provideSurface(cameraSurface, cameraExecutor) {
+                                            cameraSurface.release()
+                                        }
+                                    }
+                                }
 
-        cameraProviderFuture.addListener({
-            val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
-
-            val preview = Preview.Builder().build().also {
-                it.setSurfaceProvider { request ->
-
-                    vfxEngine.setCameraTextureSize(request.resolution.width, request.resolution.height)
-
-                    surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
-                    val surface = Surface(surfaceTexture)
-
-                    surfaceTexture.setOnFrameAvailableListener {
-                        vfxEngine.notifyCameraFrameAvailable()
+                                try {
+                                    cameraProvider.unbindAll()
+                                    cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview)
+                                } catch (exc: Exception) {
+                                    Log.e("VfxPreviewView", "Camera binding failed", exc)
+                                }
+                            }, ContextCompat.getMainExecutor(ctx))
+                        }
+                        engine.generateCameraTexture()
                     }
 
-                    request.provideSurface(surface, cameraExecutor) {
-                        surface.release()
+                    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
+                    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
+                        engine.setSurface(null)
+                        return true
                     }
+                    override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
                 }
             }
-
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-            try {
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview)
-                isCameraStarted = true
-            } catch(exc: Exception) {
-                Log.e("PreviewComponent", "Use case binding failed", exc)
-            }
-
-        }, ContextCompat.getMainExecutor(context))
-    }
-
-    fun getEngine(): VfxEngine = vfxEngine
-
-    fun onDestroy() {
-        cameraExecutor.shutdown()
-        vfxEngine.destroy()
-    }
+        }
+    )
 }

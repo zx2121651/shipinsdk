@@ -1,76 +1,97 @@
 package com.vfx.record
 
-import android.content.Context
-import android.util.AttributeSet
-import android.view.LayoutInflater
-import android.widget.FrameLayout
-import android.widget.ImageButton
-import android.widget.LinearLayout
 import android.widget.Toast
-import com.vfx.core.VfxEngine
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.vfx.core.CodecType
+import com.vfx.core.VfxEngine
 import java.io.File
 
-class RecordComponent @JvmOverloads constructor(
-    context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
-) : FrameLayout(context, attrs, defStyleAttr) {
+@Composable
+fun RecordPanel(engine: VfxEngine, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var isRecording by remember { mutableStateOf(false) }
 
-    private var isRecording = false
-    private var vfxEngine: VfxEngine? = null
-    private lateinit var recordButton: ImageButton
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(bottom = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
 
-    init {
-        LayoutInflater.from(context).inflate(R.layout.layout_record_component, this, true)
+        // Mode Selector
+        Row(
+            modifier = Modifier.padding(bottom = 24.dp),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Text("15s", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp, modifier = Modifier.padding(end = 24.dp))
+            Text("60s", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp, modifier = Modifier.padding(end = 24.dp))
+            Text("Video", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        }
 
-        recordButton = findViewById(R.id.btn_record)
-        recordButton.setOnClickListener {
-            if (isRecording) {
-                stopRecording()
-            } else {
-                startRecording()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Effects Button
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
+                Toast.makeText(context, "Effects (TODO)", Toast.LENGTH_SHORT).show()
+            }) {
+                Image(painterResource(android.R.drawable.ic_menu_camera), contentDescription = "Effects", modifier = Modifier.size(32.dp))
+                Text("Effects", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+            }
+
+            // Record Button
+            Box(
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.3f))
+                    .clickable {
+                        if (isRecording) {
+                            engine.stopRecording()
+                            isRecording = false
+                            Toast.makeText(context, "Saved to cache", Toast.LENGTH_SHORT).show()
+                        } else {
+                            val outputFile = File(context.cacheDir, "vfx_record_out.mp4")
+                            engine.startRecording(outputFile.absolutePath, CodecType.H265)
+                            isRecording = true
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                // Inner shape morphs based on recording state
+                Box(
+                    modifier = Modifier
+                        .size(if (isRecording) 32.dp else 56.dp)
+                        .clip(if (isRecording) RoundedCornerShape(8.dp) else CircleShape)
+                        .background(Color.Red)
+                )
+            }
+
+            // Upload/Gallery Button
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
+                Toast.makeText(context, "Upload (TODO)", Toast.LENGTH_SHORT).show()
+            }) {
+                Image(painterResource(android.R.drawable.ic_menu_gallery), contentDescription = "Upload", modifier = Modifier.size(32.dp))
+                Text("Upload", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
             }
         }
-
-        // Bottom Panel Stub Actions
-        findViewById<LinearLayout>(R.id.btn_effects).setOnClickListener {
-            Toast.makeText(context, "Effects (TODO: Show bottom sheet with VFX list)", Toast.LENGTH_SHORT).show()
-        }
-
-        findViewById<LinearLayout>(R.id.btn_gallery).setOnClickListener {
-            Toast.makeText(context, "Gallery (TODO: Open system picker)", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    fun attachEngine(engine: VfxEngine) {
-        this.vfxEngine = engine
-    }
-
-    private fun startRecording() {
-        val outputFile = File(context.cacheDir, "vfx_record_out.mp4")
-
-        // Hardcode H.265 for performance demonstration
-        vfxEngine?.startRecording(outputFile.absolutePath, CodecType.H265)
-        isRecording = true
-
-        // Morph the button into a Stop square
-        recordButton.setBackgroundResource(R.drawable.bg_record_btn_recording)
-        val params = recordButton.layoutParams
-        params.width = (48 * resources.displayMetrics.density).toInt()
-        params.height = (48 * resources.displayMetrics.density).toInt()
-        recordButton.layoutParams = params
-    }
-
-    private fun stopRecording() {
-        vfxEngine?.stopRecording()
-        isRecording = false
-
-        // Morph back to circular capture
-        recordButton.setBackgroundResource(R.drawable.bg_record_btn_idle)
-        val params = recordButton.layoutParams
-        params.width = (72 * resources.displayMetrics.density).toInt()
-        params.height = (72 * resources.displayMetrics.density).toInt()
-        recordButton.layoutParams = params
-
-        Toast.makeText(context, "Video Saved!", Toast.LENGTH_SHORT).show()
     }
 }

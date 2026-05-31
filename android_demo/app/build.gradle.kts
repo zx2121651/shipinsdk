@@ -21,8 +21,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
-    kotlinOptions {
-        jvmTarget = "17"
+    buildFeatures {
+        compose = true
+    }
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.8" // Matches Kotlin 1.9.22
     }
 }
 
@@ -30,8 +33,19 @@ dependencies {
     implementation(project(":vfx-core"))
     implementation(project(":vfx-preview"))
     implementation(project(":vfx-record"))
+
+    val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
+    implementation(composeBom)
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
+    implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+
     implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.11.0")
+}
+dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 }
