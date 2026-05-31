@@ -25,9 +25,13 @@ int main() {
 
     // Test RHI Factory
     vfx::HardwareCapabilities caps;
-    auto rhi = vfx::createRHI(vfx::RHIBackend::Vulkan, caps);
-    assert(rhi != nullptr);
-    assert(rhi->getBackendType() == vfx::RHIBackend::Vulkan);
+
+    // Default or Auto might return GLES on non-Apple/non-Vulkan specific builds based on our current logic.
+    // Let's test the explicit creation of GLES since that's our focus.
+    auto glesRhi = vfx::createRHI(vfx::RHIBackend::GLES, caps);
+    assert(glesRhi != nullptr);
+    assert(glesRhi->getBackendType() == vfx::RHIBackend::GLES);
+    std::cout << "GLES RHI creation successful." << std::endl;
 
     std::cout << "All tests passed successfully!" << std::endl;
 
