@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black">
+
+    <!-- 1. Immersive Preview Component (Bottom-most Layer) -->
+    <com.vfx.preview.PreviewComponent
+        android:id="@+id/previewComponent"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- Gradient Shadows for text readability -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:background="@drawable/bg_top_gradient"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="200dp"
+        android:background="@drawable/bg_bottom_gradient"
+        app:layout_constraintBottom_toBottomOf="parent" />
+
+    <!-- 2. Top Bar (Close, Flash, Timer) -->
+    <ImageView
+        android:id="@+id/btn_close"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="48dp"
+        android:padding="8dp"
+        android:src="@drawable/ic_close"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- Top Center Placeholder (e.g. Select Music) -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Select Music"
+        android:textColor="@android:color/white"
+        android:drawablePadding="8dp"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="8dp"
+        android:background="#40000000"
+        app:layout_constraintTop_toTopOf="@id/btn_close"
+        app:layout_constraintBottom_toBottomOf="@id/btn_close"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- 3. Right Sidebar Tools -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="48dp"
+        android:gravity="center_horizontal"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageView
+            android:id="@+id/btn_flip"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="8dp"
+            android:src="@drawable/ic_flip" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Flip" android:textColor="#FFF" android:textSize="10sp" android:layout_marginBottom="16dp" />
+
+        <ImageView
+            android:id="@+id/btn_timer"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="8dp"
+            android:src="@drawable/ic_timer" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Timer" android:textColor="#FFF" android:textSize="10sp" android:layout_marginBottom="16dp"/>
+
+        <ImageView
+            android:id="@+id/btn_filter"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="8dp"
+            android:src="@drawable/ic_filter" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Filters" android:textColor="#FFF" android:textSize="10sp" android:layout_marginBottom="16dp"/>
+
+        <ImageView
+            android:id="@+id/btn_beauty"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:padding="8dp"
+            android:src="@drawable/ic_beauty" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Beauty" android:textColor="#FFF" android:textSize="10sp" />
+    </LinearLayout>
+
+    <!-- 4. Bottom Control Panel (Record Component wraps this) -->
+    <com.vfx.record.RecordComponent
+        android:id="@+id/recordComponent"
+        android:layout_width="0dp"
+        android:layout_height="160dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
