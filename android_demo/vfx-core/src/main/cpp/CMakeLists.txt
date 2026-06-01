@@ -3,6 +3,15 @@ project("vfx-core")
 
 set(CMAKE_CXX_STANDARD 20)
 
+# Fetch Oboe for Android
+include(FetchContent)
+FetchContent_Declare(
+    oboe
+    GIT_REPOSITORY https://github.com/google/oboe.git
+    GIT_TAG        1.8.0
+)
+FetchContent_MakeAvailable(oboe)
+
 # Import the existing C++ VFX engine SDK
 set(VFX_ENGINE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../../)
 
@@ -36,6 +45,7 @@ target_link_libraries(vfx_engine
     ${gles2-lib}
     ${mediandk-lib}
     ${android-lib}
+    oboe
 )
 
 # Link JNI bridge with Engine SDK

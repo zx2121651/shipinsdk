@@ -18,6 +18,17 @@ target_include_directories(vfx_engine PUBLIC
 find_package(Threads REQUIRED)
 target_link_libraries(vfx_engine PRIVATE Threads::Threads)
 
+if(ANDROID)
+    target_link_libraries(vfx_engine PRIVATE
+        android
+        log
+        EGL
+        GLESv3
+        mediandk
+        oboe::oboe
+    )
+endif()
+
 install(TARGETS vfx_engine
     EXPORT VFXEngineTargets
     LIBRARY DESTINATION lib

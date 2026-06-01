@@ -10,15 +10,18 @@
 #include "vfx_engine/core/filters/OESCameraFilter.h"
 #include "vfx_engine/core/filters/GrayscaleFilter.h"
 #include "vfx_engine/rhi/RHI.h"
-#include "vfx_engine/media/VideoEncoder.h"
+#include "vfx_engine/media/MediaEncoder.h"
+#include "vfx_engine/media/AudioCapture.h"
 
 #define LOG_TAG "VFX_JNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static vfx::RenderThread* gRenderThread = nullptr;
 static std::shared_ptr<vfx::IRHI> gRHI = nullptr;
 static std::shared_ptr<vfx::RenderGraph> gRenderGraph = nullptr;
-static std::shared_ptr<vfx::VideoEncoder> gVideoEncoder = nullptr;
+static std::shared_ptr<vfx::MediaEncoder> gMediaEncoder = nullptr;
+static std::shared_ptr<vfx::AudioCapture> gAudioCapture = nullptr;
 
 static ANativeWindow* gWindow = nullptr;
 static int gCameraTextureId = -1;
@@ -146,10 +149,10 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
                             gRHI->swapBuffers();
                         }
 
-                        if (gVideoEncoder) {
+                        if (gMediaEncoder) {
                             gRHI->makeEncoderWindowCurrent();
                             gRenderGraph->execute(ctx);
-                            gVideoEncoder->notifyFrameReady();
+                            gMediaEncoder->notifyFrameReady();
                             gRHI->swapEncoderBuffers();
                         }
 
@@ -172,15 +175,26 @@ Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstr
 
     if (gRenderThread) {
         gRenderThread->postTask([path, codecType]() {
-            if (!gVideoEncoder && gRHI) {
-                LOGI("RenderThread: Starting Video Encoder to %s", path.c_str());
-                gVideoEncoder = vfx::VideoEncoder::create();
+            if (!gMediaEncoder && gRHI) {
+                LOGI("RenderThread: Starting Media Encoder to %s", path.c_str());
+                gMediaEncoder = vfx::MediaEncoder::create();
                 int w = gCameraWidth > 0 ? gCameraWidth : 1280;
                 int h = gCameraHeight > 0 ? gCameraHeight : 720;
-                if (gVideoEncoder->start(path, w, h, codecType)) {
-                    gRHI->setEncoderWindow(gVideoEncoder->getInputWindow());
+                if (gMediaEncoder->start(path, w, h, codecType, true)) {
+                    gRHI->setEncoderWindow(gMediaEncoder->getInputWindow());
+
+                    // Start Audio Capture
+                    gAudioCapture = vfx::AudioCapture::create();
+                    gAudioCapture->setCallback([](const int16_t* audioData, int numFrames, int64_t timestampNs) {
+                        if (gMediaEncoder) {
+                            gMediaEncoder->encodeAudioFrame(audioData, numFrames, timestampNs);
+                        }
+                    });
+                    if (!gAudioCapture->start(48000, 2)) {
+                        LOGE("Failed to start AudioCapture");
+                    }
                 } else {
-                    gVideoEncoder = nullptr;
+                    gMediaEncoder = nullptr;
                 }
             }
         });
@@ -191,11 +205,15 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_vfx_core_VfxEngine_stopRecording(JNIEnv* env, jobject /* this */) {
     if (gRenderThread) {
         gRenderThread->postTask([]() {
-            if (gVideoEncoder && gRHI) {
-                LOGI("RenderThread: Stopping Video Encoder...");
+            if (gAudioCapture) {
+                gAudioCapture->stop();
+                gAudioCapture = nullptr;
+            }
+            if (gMediaEncoder && gRHI) {
+                LOGI("RenderThread: Stopping Media Encoder...");
                 gRHI->setEncoderWindow(nullptr);
-                gVideoEncoder->stop();
-                gVideoEncoder = nullptr;
+                gMediaEncoder->stop();
+                gMediaEncoder = nullptr;
             }
         });
     }
@@ -213,9 +231,13 @@ Java_com_vfx_core_VfxEngine_destroy(JNIEnv* env, jobject /* this */) {
                 gRenderGraph = nullptr;
                 gGraphInitialized = false;
             }
-            if (gVideoEncoder) {
-                gVideoEncoder->stop();
-                gVideoEncoder = nullptr;
+            if (gAudioCapture) {
+                gAudioCapture->stop();
+                gAudioCapture = nullptr;
+            }
+            if (gMediaEncoder) {
+                gMediaEncoder->stop();
+                gMediaEncoder = nullptr;
             }
             if (gRHI) {
                 gRHI->setEncoderWindow(nullptr);

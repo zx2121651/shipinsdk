@@ -25,6 +25,17 @@ else()
     set(BUILD_SHARED_LIBS OFF)
 endif()
 
+# Fetch Oboe for Android
+if(ANDROID)
+    include(FetchContent)
+    FetchContent_Declare(
+        oboe
+        GIT_REPOSITORY https://github.com/google/oboe.git
+        GIT_TAG        1.8.0
+    )
+    FetchContent_MakeAvailable(oboe)
+endif()
+
 # Include directories
 set(VFX_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
 include_directories(${VFX_INCLUDE_DIR})
