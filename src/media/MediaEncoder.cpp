@@ -37,10 +37,11 @@ public:
         close(fd);
         if (!m_muxer) return false;
 
-        // --- Video Codec Setup ---
+        // --- 视频硬件编码器配置 (Video Codec Setup) ---
         const char* videoMime = (requestedCodec == VideoCodecType::H265) ? "video/hevc" : "video/avc";
         m_videoCodec = AMediaCodec_createEncoderByType(videoMime);
         if (!m_videoCodec && requestedCodec == VideoCodecType::H265) {
+            // 动态降级：如果设备不支持 H.265(HEVC) 硬编，则自动回退到兼容性最广的 H.264(AVC)
             videoMime = "video/avc";
             m_videoCodec = AMediaCodec_createEncoderByType(videoMime);
         }
@@ -65,16 +66,17 @@ public:
             m_hasVideo = true;
         }
 
-        // --- Audio Codec Setup ---
+        // --- 音频编码器配置 (Audio Codec Setup) ---
         if (enableAudio) {
+            // "audio/mp4a-latm" 映射到 AAC 编码器
             m_audioCodec = AMediaCodec_createEncoderByType("audio/mp4a-latm");
             if (m_audioCodec) {
                 AMediaFormat* format = AMediaFormat_new();
                 AMediaFormat_setString(format, AMEDIAFORMAT_KEY_MIME, "audio/mp4a-latm");
                 AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_SAMPLE_RATE, 48000);
                 AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_CHANNEL_COUNT, 2);
-                AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_BIT_RATE, 128000);
-                // AAC LC
+                AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_BIT_RATE, 128000); // 128 kbps
+                // AAC LC (Low Complexity) Profile = 2
                 AMediaFormat_setInt32(format, AMEDIAFORMAT_KEY_AAC_PROFILE, 2);
 
                 if (AMediaCodec_configure(m_audioCodec, format, nullptr, nullptr, AMEDIACODEC_CONFIGURE_FLAG_ENCODE) == AMEDIA_OK) {
@@ -88,6 +90,7 @@ public:
         }
 
         m_isRecording = true;
+        // 建立全局绝对时间戳基准（纳秒），用于后续音视频的同步(PTS)对齐
         m_startTimeNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
         LOGI("MediaEncoder successfully started. Video: %d, Audio: %d", m_hasVideo, m_hasAudio);
         return true;
@@ -102,7 +105,7 @@ public:
             AMediaCodec_signalEndOfInputStream(m_videoCodec);
         }
 
-        // Feed EOS to audio
+        // 给音频编码器注入 EOS (End of Stream) 标记，指示音频录制结束
         if (m_audioCodec) {
              ssize_t inputBufIdx = AMediaCodec_dequeueInputBuffer(m_audioCodec, 10000);
              if (inputBufIdx >= 0) {
@@ -144,20 +147,25 @@ public:
         if (!m_isRecording || !m_audioCodec) return;
 
         std::lock_guard<std::mutex> lock(m_mutex);
+        // 向音频编码器请求一个可用的输入缓冲区 (InputBuffer)
         ssize_t inputBufIdx = AMediaCodec_dequeueInputBuffer(m_audioCodec, 0);
         if (inputBufIdx >= 0) {
             size_t bufSize = 0;
             uint8_t* buf = AMediaCodec_getInputBuffer(m_audioCodec, inputBufIdx, &bufSize);
-            size_t dataSize = numFrames * 2 * sizeof(int16_t); // 2 channels
+            size_t dataSize = numFrames * 2 * sizeof(int16_t); // 双声道，16-bit 采样
 
             if (buf && dataSize <= bufSize) {
+                // 将 Oboe 捕获的 PCM 数据拷贝进编码器缓冲
                 memcpy(buf, audioData, dataSize);
-                // Convert timestamp to microseconds relative to start
+                // 【核心逻辑：音视频同步】
+                // 将绝对时间戳转换为相对录像开始时间的时间戳（微秒），确保写入文件的 PTS 是从 0 开始连续的
                 int64_t ptsUs = (timestampNs - m_startTimeNs) / 1000;
                 if (ptsUs < 0) ptsUs = 0;
+                // 把包含数据和相对 PTS 的缓冲丢给 AAC 编码器压缩
                 AMediaCodec_queueInputBuffer(m_audioCodec, inputBufIdx, 0, dataSize, ptsUs, 0);
             }
         }
+        // 尝试抽取编码完毕的音频包
         drainInternal();
     }
 
@@ -179,7 +187,7 @@ private:
         bool videoDone = !m_hasVideo;
         bool audioDone = !m_hasAudio;
 
-        // Ensure both tracks are added before starting muxer
+        // 关键等待：只有当音轨和视轨都被 Muxer 成功添加后，才能正式 Start Muxer。
         if (!m_muxerStarted) {
             if (m_hasVideo && m_videoTrackIndex < 0) {
                 AMediaCodecBufferInfo info;
@@ -212,7 +220,7 @@ private:
 
         if (!m_muxerStarted) return;
 
-        // Drain Video
+        // 抽取并写入视频包 (Drain Video)
         if (m_hasVideo) {
             while (true) {
                 AMediaCodecBufferInfo info;
@@ -220,15 +228,20 @@ private:
                 if (status >= 0) {
                     uint8_t* buf = AMediaCodec_getOutputBuffer(m_videoCodec, status, nullptr);
                     if (buf && info.size > 0) {
-                        // HW Encoders output absolute PTS (device uptime). We must offset it to start at 0.
+                        // 【核心逻辑：音视频同步】
+                        // 硬件视频编码器输出的 PTS 是绝对时间（设备开机时间 uptime）。
+                        // 必须将其减去录制开始时间，使其成为从 0 开始的相对时间，与音频保持一致。
                         int64_t ptsUs = info.presentationTimeUs - (m_startTimeNs / 1000);
                         if (ptsUs < 0) ptsUs = 0;
                         info.presentationTimeUs = ptsUs;
+                        // 将修正时间戳后的压缩视频包写入 MP4
                         AMediaMuxer_writeSampleData(m_muxer, m_videoTrackIndex, buf, &info);
                     }
                     AMediaCodec_releaseOutputBuffer(m_videoCodec, status, false);
+                    // 如果碰到了文件尾(EOS)标记，说明视频编码彻底结束，跳出循环
                     if ((info.flags & AMEDIACODEC_BUFFER_FLAG_END_OF_STREAM) != 0) break;
                 } else {
+                    // 如果没有数据可以拉取，跳出循环
                     break;
                 }
             }

@@ -174,22 +174,29 @@ Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstr
     vfx::VideoCodecType codecType = (codecTypeInt == 1) ? vfx::VideoCodecType::H265 : vfx::VideoCodecType::H264;
 
     if (gRenderThread) {
+        // 在渲染线程异步启动编码器，防止阻塞主线程 UI
         gRenderThread->postTask([path, codecType]() {
             if (!gMediaEncoder && gRHI) {
                 LOGI("RenderThread: Starting Media Encoder to %s", path.c_str());
                 gMediaEncoder = vfx::MediaEncoder::create();
                 int w = gCameraWidth > 0 ? gCameraWidth : 1280;
                 int h = gCameraHeight > 0 ? gCameraHeight : 720;
+
+                // 启动 MediaEncoder (包含视频轨和音频轨)
                 if (gMediaEncoder->start(path, w, h, codecType, true)) {
+                    // 将视频编码器的输入表面绑定到 RHI (多目标渲染，用于后续无 CPU 拷贝的录制)
                     gRHI->setEncoderWindow(gMediaEncoder->getInputWindow());
 
-                    // Start Audio Capture
+                    // 启动 Oboe 音频采集
                     gAudioCapture = vfx::AudioCapture::create();
                     gAudioCapture->setCallback([](const int16_t* audioData, int numFrames, int64_t timestampNs) {
                         if (gMediaEncoder) {
+                            // 将捕获到的 PCM 音频块推送给 AAC 硬件编码器
                             gMediaEncoder->encodeAudioFrame(audioData, numFrames, timestampNs);
                         }
                     });
+
+                    // 尝试以 48000 Hz, 双声道配置启动麦克风
                     if (!gAudioCapture->start(48000, 2)) {
                         LOGE("Failed to start AudioCapture");
                     }
@@ -204,14 +211,18 @@ Java_com_vfx_core_VfxEngine_startRecording(JNIEnv* env, jobject /* this */, jstr
 extern "C" JNIEXPORT void JNICALL
 Java_com_vfx_core_VfxEngine_stopRecording(JNIEnv* env, jobject /* this */) {
     if (gRenderThread) {
+        // 在渲染线程异步停止录像，安全关闭硬件编码器和释放音频流
         gRenderThread->postTask([]() {
+            // 优先停止音频采集，切断 PCM 数据源
             if (gAudioCapture) {
                 gAudioCapture->stop();
                 gAudioCapture = nullptr;
             }
             if (gMediaEncoder && gRHI) {
                 LOGI("RenderThread: Stopping Media Encoder...");
+                // 解绑编码器渲染表面
                 gRHI->setEncoderWindow(nullptr);
+                // 发送 EOS 信号并抽干最后几帧，封装完成 MP4
                 gMediaEncoder->stop();
                 gMediaEncoder = nullptr;
             }

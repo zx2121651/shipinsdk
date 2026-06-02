@@ -18,13 +18,15 @@ public:
     ~NdkAudioCapture() { stop(); }
 
     bool start(int sampleRate, int channelCount) override {
+        // 初始化 Oboe 构造器
+        // 显式指定：输入方向(录音)、低延迟模式、16-bit PCM 格式。
         oboe::AudioStreamBuilder builder;
         builder.setDirection(oboe::Direction::Input)
                ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
                ->setFormat(oboe::AudioFormat::I16)
                ->setSampleRate(sampleRate)
                ->setChannelCount(channelCount)
-               ->setDataCallback(this);
+               ->setDataCallback(this); // 绑定当前对象作为数据回调接收者
 
         oboe::Result result = builder.openStream(m_stream);
         if (result != oboe::Result::OK) {
@@ -56,15 +58,17 @@ public:
         m_callback = callback;
     }
 
+    // Oboe 底层高优先级音频线程回调函数
     oboe::DataCallbackResult onAudioReady(oboe::AudioStream* audioStream, void* audioData, int32_t numFrames) override {
         if (m_callback && audioData != nullptr && numFrames > 0) {
-            // Compute current timestamp in nanoseconds
+            // 计算当前的绝对时间戳（纳秒级别，基于 steady_clock）
+            // 此时间戳将传递给 MediaEncoder，并在那里被转换为从 0 开始的相对 PTS 时间
             auto now = std::chrono::steady_clock::now();
             int64_t timestampNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
 
             m_callback(static_cast<const int16_t*>(audioData), numFrames, timestampNs);
         }
-        return oboe::DataCallbackResult::Continue;
+        return oboe::DataCallbackResult::Continue; // 告诉底层持续录音
     }
 
 private:
