@@ -2,6 +2,12 @@
 
 本项目是一款现代化的、具备跨平台显式图形抽象 (RHI) 的短视频与特效渲染引擎。系统架构以高性能、跨端互通为核心，旨在解决移动端复杂的实时滤镜、多轨渲染及高性能视频导出等需求。
 
+## 详细文档 (Documentation)
+请参阅 `docs/` 目录下的详细中文文档：
+* [功能规格说明 (Functional Specification)](docs/01_Functional_Spec.md)
+* [底层技术架构文档 (Technical Architecture)](docs/02_Technical_Architecture.md)
+* [SDK API 接口文档 (API Reference)](docs/03_API_Reference.md)
+
 ## 核心架构特性
 
 1. **严格异步的渲染线程模型 (RenderThread)**
