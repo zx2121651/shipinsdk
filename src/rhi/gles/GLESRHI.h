@@ -14,28 +14,26 @@ public:
     void setWindow(void* window) override;
     void setEncoderWindow(void* window) override;
 
-    void swapBuffers() override;
-    void swapEncoderBuffers() override;
-
     void makeMainWindowCurrent() override;
     void makeEncoderWindowCurrent() override;
 
-    unsigned int compileShaderProgram(const char* vertexSource, const char* fragmentSource) override;
-    void deleteShaderProgram(unsigned int programId) override;
-    void drawFullScreenQuad(unsigned int programId, int textureId, bool isOES, const float* transformMatrix) override;
+    void present(bool encoderSurface) override;
 
+    std::shared_ptr<IShader> createShader(const std::string& vertexSource, const std::string& fragmentSource) override;
+    std::shared_ptr<IPipelineState> createPipelineState(std::shared_ptr<IShader> shader) override;
+    std::shared_ptr<ITexture> createTexture(int width, int height, TextureType type) override;
+    std::shared_ptr<ITexture> createTextureFromNative(void* nativeHandle, int width, int height, TextureType type) override;
     std::shared_ptr<IRenderTarget> createRenderTarget(int width, int height) override;
-    void bindRenderTarget(std::shared_ptr<IRenderTarget> target) override;
-    void unbindRenderTarget() override;
-
-    std::shared_ptr<ITexture> createTexture(int width, int height) override;
     std::shared_ptr<ICommandBuffer> createCommandBuffer() override;
-    std::shared_ptr<IPipelineState> createPipelineState() override;
 
     RHIBackend getBackendType() const override { return RHIBackend::GLES; }
 
+    // Internal methods needed by GLESCommandBuffer
+    void makeContextCurrent(bool encoderSurface);
+    unsigned int getQuadVBO() const { return m_vbo; }
+
 private:
-    bool setupVBO();
+    unsigned int m_vbo = 0;
 
     void* m_eglDisplay;
     void* m_eglContext;
@@ -43,10 +41,6 @@ private:
 
     void* m_eglSurfaceMain;
     void* m_eglSurfaceEncoder;
-
-    unsigned int m_vbo = 0;
-    int m_currentViewportWidth = 0;
-    int m_currentViewportHeight = 0;
 };
 
 } // namespace vfx

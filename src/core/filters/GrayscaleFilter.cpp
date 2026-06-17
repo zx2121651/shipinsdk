@@ -30,24 +30,25 @@ GrayscaleFilter::~GrayscaleFilter() {
 bool GrayscaleFilter::initialize(std::shared_ptr<IRHI> rhi) {
     m_rhi = rhi;
     if (m_rhi) {
-        m_programId = m_rhi->compileShaderProgram(VERTEX_SHADER, GRAYSCALE_FRAGMENT_SHADER);
-        return m_programId != 0;
+        auto shader = m_rhi->createShader(VERTEX_SHADER, GRAYSCALE_FRAGMENT_SHADER);
+        if (shader) {
+            m_pso = m_rhi->createPipelineState(shader);
+            return m_pso != nullptr;
+        }
     }
     return false;
 }
 
 void GrayscaleFilter::release() {
-    if (m_rhi && m_programId != 0) {
-        m_rhi->deleteShaderProgram(m_programId);
-        m_programId = 0;
-    }
+    m_pso = nullptr;
+    m_rhi = nullptr;
 }
 
 void GrayscaleFilter::process(RenderContext& context) {
-    if (m_rhi && m_programId != 0 && context.inputTextureId >= 0) {
-        // Draw applying grayscale filter.
-        // isOES = false, because the input texture comes from the previous FBO, which is a standard GL_TEXTURE_2D.
-        m_rhi->drawFullScreenQuad(m_programId, context.inputTextureId, false, nullptr);
+    if (m_pso && context.inputTexture && context.cmdBuffer) {
+        context.cmdBuffer->bindPipelineState(m_pso);
+        context.cmdBuffer->bindTexture(0, context.inputTexture);
+        context.cmdBuffer->drawFullScreenQuad();
     }
 }
 

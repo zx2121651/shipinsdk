@@ -88,17 +88,19 @@ Java_com_vfx_core_VfxEngine_generateCameraTexture(JNIEnv* env, jobject obj) {
     if (gRenderThread) {
         gRenderThread->postTask([]() {
             if (gRHI && gThreadAttached && gVfxEngineObj) {
-                gRHI->makeMainWindowCurrent();
-
-                unsigned int textureId = 0;
-                glGenTextures(1, &textureId);
-                gCameraTextureId = textureId;
+                // In Pure RHI, we delegate texture creation to the RHI layer
+                auto tex = gRHI->createTexture(0, 0, vfx::TextureType::TextureExternal);
+                if (tex) {
+                    gCameraTextureId = static_cast<int>(reinterpret_cast<uintptr_t>(tex->getNativeHandle()));
+                } else {
+                    gCameraTextureId = -1;
+                }
 
                 JNIEnv* jniEnv;
                 if (gJvm->GetEnv((void**)&jniEnv, JNI_VERSION_1_6) == JNI_OK) {
                     jclass clazz = jniEnv->GetObjectClass(gVfxEngineObj);
                     jmethodID methodId = jniEnv->GetMethodID(clazz, "onCameraTextureGenerated", "(I)V");
-                    if (methodId) jniEnv->CallVoidMethod(gVfxEngineObj, methodId, textureId);
+                    if (methodId) jniEnv->CallVoidMethod(gVfxEngineObj, methodId, gCameraTextureId);
                     jniEnv->DeleteLocalRef(clazz);
                 }
             }
@@ -119,8 +121,6 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
     gRenderThread->postTask([]() {
         if (gRHI && gRenderGraph && gWindow && gThreadAttached && gVfxEngineObj) {
 
-            gRHI->makeMainWindowCurrent();
-
             if (!gGraphInitialized) {
                 gRenderGraph->addFilter(std::make_shared<vfx::OESCameraFilter>());
                 gRenderGraph->addFilter(std::make_shared<vfx::GrayscaleFilter>());
@@ -138,22 +138,26 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
 
                         vfx::RenderContext ctx;
                         ctx.rhi = gRHI;
-                        ctx.inputTextureId = gCameraTextureId;
+                        // For input we wrap the GL external texture ID via the pure RHI.
+                        // Safe 64-bit cast using uintptr_t.
+                        ctx.inputTexture = gRHI->createTextureFromNative(reinterpret_cast<void*>(static_cast<uintptr_t>(gCameraTextureId)), gCameraWidth, gCameraHeight, vfx::TextureType::TextureExternal);
                         ctx.transformMatrix = matrixBody;
                         ctx.width = gCameraWidth > 0 ? gCameraWidth : 1280;
                         ctx.height = gCameraHeight > 0 ? gCameraHeight : 720;
+                        ctx.cmdBuffer = gRHI->createCommandBuffer();
 
                         if (gWindow) {
-                            gRHI->makeMainWindowCurrent();
+                            // Note: outputTextureId was removed from RenderContext during pure RHI refactor
+                            gRHI->makeMainWindowCurrent(); // Legacy fallback required until RenderTarget completely abstracts window surfaces
                             gRenderGraph->execute(ctx);
-                            gRHI->swapBuffers();
+                            gRHI->present(false);
                         }
 
                         if (gMediaEncoder) {
-                            gRHI->makeEncoderWindowCurrent();
+                            gRHI->makeEncoderWindowCurrent(); // Legacy fallback
                             gRenderGraph->execute(ctx);
                             gMediaEncoder->notifyFrameReady();
-                            gRHI->swapEncoderBuffers();
+                            gRHI->present(true);
                         }
 
                         jniEnv->ReleaseFloatArrayElements(matrixObj, matrixBody, 0);

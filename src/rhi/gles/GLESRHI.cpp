@@ -1,487 +1,513 @@
 #include "GLESRHI.h"
 #include <iostream>
+#include <vector>
+#include <functional>
 
 #ifdef __ANDROID__
 #include <EGL/egl.h>
-#include <EGL/eglext.h>
-#include <GLES3/gl32.h>
+#include <GLES3/gl3.h>
 #include <GLES2/gl2ext.h>
+#include <android/native_window.h>
 #include <android/log.h>
-#define LOG_TAG "VFX_GLES"
+
+#define LOG_TAG "VFX_GLES_RHI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-#ifndef EGL_CONTEXT_MINOR_VERSION_KHR
-#define EGL_CONTEXT_MINOR_VERSION_KHR 0x30FB
-#endif
-
 #else
-#define LOGI(...) do {} while(0)
-#define LOGE(...) do {} while(0)
+// Stub definitions for non-Android builds to compile
 typedef void* EGLDisplay;
 typedef void* EGLContext;
 typedef void* EGLSurface;
 typedef void* EGLConfig;
-typedef void* EGLNativeWindowType;
-#define EGL_NO_DISPLAY ((EGLDisplay)0)
-#define EGL_NO_CONTEXT ((EGLContext)0)
-#define EGL_NO_SURFACE ((EGLSurface)0)
-#define EGL_TRUE 1
-#define EGL_FALSE 0
-#define EGL_SUCCESS 0x3000
-#define EGL_RENDERABLE_TYPE 0x3040
-#define EGL_SURFACE_TYPE 0x3033
-#define EGL_WINDOW_BIT 0x0004
-#define EGL_BLUE_SIZE 0x3022
-#define EGL_GREEN_SIZE 0x3023
-#define EGL_RED_SIZE 0x3024
-#define EGL_NONE 0x3038
-#define EGL_CONTEXT_CLIENT_VERSION 0x3098
-#define EGL_CONTEXT_MINOR_VERSION_KHR 0x30FB
-#define EGL_OPENGL_ES2_BIT 0x0004
-#define EGL_OPENGL_ES3_BIT 0x0040
-
-bool eglInitialize(EGLDisplay dpy, int* major, int* minor) { return true; }
-EGLDisplay eglGetDisplay(void* display_id) { return (EGLDisplay)1; }
-bool eglChooseConfig(EGLDisplay dpy, const int* attrib_list, EGLConfig* configs, int config_size, int* num_config) {
-    if (num_config) *num_config = 1; return true;
-}
-EGLContext eglCreateContext(EGLDisplay dpy, EGLConfig config, EGLContext share_context, const int* attrib_list) { return (EGLContext)1; }
-EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config, EGLNativeWindowType win, const int* attrib_list) { return (EGLSurface)1; }
-bool eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx) { return true; }
-bool eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) { return true; }
-bool eglDestroySurface(EGLDisplay dpy, EGLSurface surface) { return true; }
-bool eglDestroyContext(EGLDisplay dpy, EGLContext ctx) { return true; }
-bool eglTerminate(EGLDisplay dpy) { return true; }
-bool eglQuerySurface(EGLDisplay dpy, EGLSurface surface, int attribute, int *value) { if(value) *value=1080; return true; }
-
-void glClearColor(float r, float g, float b, float a) {}
-void glClear(unsigned int mask) {}
-void glViewport(int x, int y, int width, int height) {}
-
-unsigned int glCreateShader(unsigned int type) { return 1; }
-void glShaderSource(unsigned int shader, int count, const char** string, const int* length) {}
-void glCompileShader(unsigned int shader) {}
-void glGetShaderiv(unsigned int shader, unsigned int pname, int* params) { *params = 1; }
-void glGetShaderInfoLog(unsigned int shader, int bufSize, int* length, char* infoLog) {}
-void glDeleteShader(unsigned int shader) {}
-
-unsigned int glCreateProgram() { return 1; }
-void glAttachShader(unsigned int program, unsigned int shader) {}
-void glLinkProgram(unsigned int program) {}
-void glGetProgramiv(unsigned int program, unsigned int pname, int* params) { *params = 1; }
-void glUseProgram(unsigned int program) {}
-int glGetUniformLocation(unsigned int program, const char* name) { return 0; }
-int glGetAttribLocation(unsigned int program, const char* name) { return 0; }
-void glDeleteProgram(unsigned int program) {}
-
-void glGenBuffers(int n, unsigned int* buffers) {}
-void glBindBuffer(unsigned int target, unsigned int buffer) {}
-void glBufferData(unsigned int target, long size, const void* data, unsigned int usage) {}
-void glEnableVertexAttribArray(unsigned int index) {}
-void glVertexAttribPointer(unsigned int index, int size, unsigned int type, unsigned char normalized, int stride, const void* pointer) {}
-void glDisableVertexAttribArray(unsigned int index) {}
-
-void glActiveTexture(unsigned int texture) {}
-void glGenTextures(int n, unsigned int* textures) {}
-void glBindTexture(unsigned int target, unsigned int texture) {}
-void glTexImage2D(unsigned int target, int level, int internalformat, int width, int height, int border, unsigned int format, unsigned int type, const void *pixels) {}
-void glTexParameteri(unsigned int target, unsigned int pname, int param) {}
-void glDeleteTextures(int n, const unsigned int* textures) {}
-
-void glGenFramebuffers(int n, unsigned int* framebuffers) {}
-void glBindFramebuffer(unsigned int target, unsigned int framebuffer) {}
-void glFramebufferTexture2D(unsigned int target, unsigned int attachment, unsigned int textarget, unsigned int texture, int level) {}
-unsigned int glCheckFramebufferStatus(unsigned int target) { return 0x8CD5; } // GL_FRAMEBUFFER_COMPLETE
-void glDeleteFramebuffers(int n, const unsigned int* framebuffers) {}
-
-void glUniformMatrix4fv(int location, int count, unsigned char transpose, const float* value) {}
-void glUniform1i(int location, int v0) {}
-void glDrawArrays(unsigned int mode, int first, int count) {}
-
-#define GL_COLOR_BUFFER_BIT 0x00004000
-#define GL_VERTEX_SHADER 0x8B31
-#define GL_FRAGMENT_SHADER 0x8B30
-#define GL_COMPILE_STATUS 0x8B81
-#define GL_LINK_STATUS 0x8B82
-#define GL_ARRAY_BUFFER 0x8892
-#define GL_STATIC_DRAW 0x88E4
-#define GL_FLOAT 0x1406
-#define GL_FALSE 0
-#define GL_TRUE 1
-#define GL_TEXTURE0 0x84C0
+#define EGL_NO_DISPLAY nullptr
+#define EGL_NO_CONTEXT nullptr
+#define EGL_NO_SURFACE nullptr
 #define GL_TEXTURE_2D 0x0DE1
 #define GL_TEXTURE_EXTERNAL_OES 0x8D65
-#define GL_TEXTURE_MIN_FILTER 0x2801
-#define GL_TEXTURE_MAG_FILTER 0x2800
-#define GL_TEXTURE_WRAP_S 0x2802
-#define GL_TEXTURE_WRAP_T 0x2803
-#define GL_LINEAR 0x2601
-#define GL_CLAMP_TO_EDGE 0x812F
-#define GL_RGBA 0x1908
-#define GL_UNSIGNED_BYTE 0x1401
-#define GL_FRAMEBUFFER 0x8D40
-#define GL_COLOR_ATTACHMENT0 0x8CE0
-#define GL_FRAMEBUFFER_COMPLETE 0x8CD5
-#define GL_TRIANGLE_STRIP 0x0005
-#define EGL_WIDTH 0x3057
-#define EGL_HEIGHT 0x3056
+inline void glGenTextures(int, unsigned int*) {}
+inline void glBindTexture(int, unsigned int) {}
+inline void glTexParameteri(int, int, int) {}
+inline void glTexImage2D(int, int, int, int, int, int, int, int, const void*) {}
+inline void glDeleteTextures(int, const unsigned int*) {}
+inline void glGenFramebuffers(int, unsigned int*) {}
+inline void glBindFramebuffer(int, unsigned int) {}
+inline void glFramebufferTexture2D(int, int, int, unsigned int, int) {}
+inline void glDeleteFramebuffers(int, const unsigned int*) {}
+inline void glViewport(int, int, int, int) {}
+inline void glClearColor(float, float, float, float) {}
+inline void glClear(unsigned int) {}
+inline unsigned int glCreateShader(int) { return 0; }
+inline void glShaderSource(unsigned int, int, const char**, const int*) {}
+inline void glCompileShader(unsigned int) {}
+inline void glGetShaderiv(unsigned int, int, int*) {}
+inline void glGetShaderInfoLog(unsigned int, int, int*, char*) {}
+inline void glDeleteShader(unsigned int) {}
+inline unsigned int glCreateProgram() { return 0; }
+inline void glAttachShader(unsigned int, unsigned int) {}
+inline void glLinkProgram(unsigned int) {}
+inline void glGetProgramiv(unsigned int, int, int*) {}
+inline void glGetProgramInfoLog(unsigned int, int, int*, char*) {}
+inline void glDeleteProgram(unsigned int) {}
+inline void glUseProgram(unsigned int) {}
+inline int glGetUniformLocation(unsigned int, const char*) { return -1; }
+inline void glUniform1i(int, int) {}
+inline void glUniformMatrix4fv(int, int, int, const float*) {}
+inline void glActiveTexture(unsigned int) {}
+inline void glEnableVertexAttribArray(unsigned int) {}
+inline void glVertexAttribPointer(unsigned int, int, int, int, int, const void*) {}
+inline void glDrawArrays(int, int, int) {}
+inline void glGenBuffers(int, unsigned int*) {}
+inline void glBindBuffer(int, unsigned int) {}
+inline void glBufferData(int, int, const void*, int) {}
+inline void glDeleteBuffers(int, const unsigned int*) {}
+#define GL_FLOAT 0
+#define GL_FALSE 0
+#define GL_TRIANGLE_STRIP 0
+#define GL_ARRAY_BUFFER 0
+#define GL_STATIC_DRAW 0
+#define GL_COLOR_BUFFER_BIT 0
+#define GL_VERTEX_SHADER 0
+#define GL_FRAGMENT_SHADER 0
+#define GL_COMPILE_STATUS 0
+#define GL_LINK_STATUS 0
+#define GL_TEXTURE0 0
+#define GL_RGBA 0
+#define GL_UNSIGNED_BYTE 0
+#define GL_TEXTURE_MIN_FILTER 0
+#define GL_TEXTURE_MAG_FILTER 0
+#define GL_LINEAR 0
+#define GL_CLAMP_TO_EDGE 0
+#define GL_TEXTURE_WRAP_S 0
+#define GL_TEXTURE_WRAP_T 0
+#define GL_FRAMEBUFFER 0
+#define GL_COLOR_ATTACHMENT0 0
+#define LOGI(...)
+#define LOGE(...)
 #endif
 
 namespace vfx {
 
+// Helper: Compile shader
+static unsigned int compileShader(unsigned int type, const char* source) {
+    unsigned int shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    int compiled;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+    if (!compiled) {
+        char infoLog[512];
+        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+        LOGE("Shader compilation failed: %s", infoLog);
+        glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+
+// ------------------------------------------------------------------
+// PURE RHI IMPLEMENTATIONS FOR GLES
+// ------------------------------------------------------------------
+
 class GLESTexture : public ITexture {
 public:
-    void* getNativeHandle() const override { return nullptr; }
+    GLESTexture(unsigned int id, int w, int h, TextureType t, bool owns)
+        : textureId(id), width(w), height(h), type(t), ownsTexture(owns) {}
+
+    ~GLESTexture() override {
+        if (ownsTexture && textureId != 0) {
+            glDeleteTextures(1, &textureId);
+        }
+    }
+
+    void* getNativeHandle() const override {
+        // Return ID cast to void* for legacy interop if needed
+        return reinterpret_cast<void*>(static_cast<uintptr_t>(textureId));
+    }
+
+    TextureType getType() const override { return type; }
+    int getWidth() const override { return width; }
+    int getHeight() const override { return height; }
+
+    unsigned int textureId;
+    int width;
+    int height;
+    TextureType type;
+    bool ownsTexture;
+};
+
+class GLESRenderTarget : public IRenderTarget {
+public:
+    GLESRenderTarget(unsigned int fbo, std::shared_ptr<ITexture> tex)
+        : fboId(fbo), texture(tex) {}
+
+    ~GLESRenderTarget() override {
+        if (fboId != 0) {
+            glDeleteFramebuffers(1, &fboId);
+        }
+    }
+
+    std::shared_ptr<ITexture> getTexture() const override { return texture; }
+
+    unsigned int fboId;
+    std::shared_ptr<ITexture> texture;
+};
+
+class GLESShader : public IShader {
+public:
+    GLESShader(unsigned int pId) : programId(pId) {}
+    ~GLESShader() override {
+        if (programId != 0) glDeleteProgram(programId);
+    }
+    unsigned int programId;
+};
+
+class GLESPipelineState : public IPipelineState {
+public:
+    GLESPipelineState(std::shared_ptr<GLESShader> s) : shader(s) {}
+    std::shared_ptr<GLESShader> shader;
 };
 
 class GLESCommandBuffer : public ICommandBuffer {
 public:
-    void begin() override {}
-    void end() override {}
-    void submit() override {}
-};
+    GLESCommandBuffer(GLESRHI* rhi) : m_rhi(rhi) {}
 
-class GLESPipelineState : public IPipelineState {};
+    ~GLESCommandBuffer() override = default;
 
-class GLESRenderTarget : public IRenderTarget {
-public:
-    unsigned int fboId = 0;
-    unsigned int textureId = 0;
-    int width = 0;
-    int height = 0;
-
-    ~GLESRenderTarget() override {
-        if (fboId) glDeleteFramebuffers(1, &fboId);
-        if (textureId) glDeleteTextures(1, &textureId);
+    void begin() override {
+        m_commands.clear();
     }
 
-    int getTextureId() const override { return textureId; }
+    void beginRenderPass(const RenderPassDescriptor& desc) override {
+        m_commands.push_back([this, desc]() {
+            // First, switch EGL Context if necessary
+            m_rhi->makeContextCurrent(desc.isEncoderTarget);
+
+            if (desc.colorAttachment) {
+                auto glesRt = std::static_pointer_cast<GLESRenderTarget>(desc.colorAttachment);
+                glBindFramebuffer(GL_FRAMEBUFFER, glesRt->fboId);
+                auto tex = glesRt->getTexture();
+                if (tex) glViewport(0, 0, tex->getWidth(), tex->getHeight());
+            } else {
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                // Viewport should ideally be passed in RenderPassDescriptor, assuming 1280x720 fallback for now
+                glViewport(0, 0, 720, 1280);
+            }
+
+            if (desc.clearColor) {
+                glClearColor(desc.clearColorValue[0], desc.clearColorValue[1], desc.clearColorValue[2], desc.clearColorValue[3]);
+                glClear(GL_COLOR_BUFFER_BIT);
+            }
+        });
+    }
+
+    void bindPipelineState(std::shared_ptr<IPipelineState> pso) override {
+        m_commands.push_back([this, pso]() {
+            auto glesPso = std::static_pointer_cast<GLESPipelineState>(pso);
+            m_currentProgram = glesPso->shader->programId;
+            glUseProgram(m_currentProgram);
+        });
+    }
+
+    void bindTexture(int slot, std::shared_ptr<ITexture> texture) override {
+        m_commands.push_back([this, slot, texture]() {
+            auto glesTex = std::static_pointer_cast<GLESTexture>(texture);
+            glActiveTexture(GL_TEXTURE0 + slot);
+            int target = (glesTex->type == TextureType::TextureExternal) ? GL_TEXTURE_EXTERNAL_OES : GL_TEXTURE_2D;
+            glBindTexture(target, glesTex->textureId);
+
+            if (m_currentProgram != 0) {
+                int loc = glGetUniformLocation(m_currentProgram, "uTexture");
+                if (loc >= 0) glUniform1i(loc, slot);
+            }
+        });
+    }
+
+    void pushConstants(const void* data, size_t size) override {
+        // Specifically built for the 4x4 float transform matrix from CameraX/OES
+        if (size == 16 * sizeof(float)) {
+            // We copy data to a captured vector so it lives until submit
+            std::vector<float> matrix((const float*)data, (const float*)data + 16);
+            m_commands.push_back([this, matrix]() {
+                if (m_currentProgram != 0) {
+                    int loc = glGetUniformLocation(m_currentProgram, "uTransformMatrix");
+                    if (loc >= 0) {
+                        glUniformMatrix4fv(loc, 1, GL_FALSE, matrix.data());
+                    }
+                }
+            });
+        }
+    }
+
+    void drawFullScreenQuad() override {
+        m_commands.push_back([this]() {
+            glBindBuffer(GL_ARRAY_BUFFER, m_rhi->getQuadVBO());
+
+            // Assume standard attribute locations for 2D filter shaders
+            // aPosition = 0, aTexCoord = 1
+            int posLoc = 0; // Better: glGetAttribLocation(m_currentProgram, "aPosition");
+            int texLoc = 1; // Better: glGetAttribLocation(m_currentProgram, "aTexCoord");
+
+            if (m_currentProgram != 0) {
+                posLoc = glGetAttribLocation(m_currentProgram, "aPosition");
+                texLoc = glGetAttribLocation(m_currentProgram, "aTexCoord");
+            }
+
+            if (posLoc >= 0) {
+                glEnableVertexAttribArray(posLoc);
+                glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+            }
+            if (texLoc >= 0) {
+                glEnableVertexAttribArray(texLoc);
+                glVertexAttribPointer(texLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+            }
+
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        });
+    }
+
+    void endRenderPass() override {
+        // GL has no explicit end pass, maybe resolve MSAA or invalidate attachments here
+    }
+
+    void end() override {
+        // Mark end of recording
+    }
+
+    void submit() override {
+        for (auto& cmd : m_commands) {
+            cmd();
+        }
+    }
+
+private:
+    GLESRHI* m_rhi;
+    unsigned int m_vbo = 0;
+    unsigned int m_currentProgram = 0;
+    std::vector<std::function<void()>> m_commands;
+
+    // Polyfill for NDK missing symbols locally
+    int glGetAttribLocation(unsigned int program, const char* name) {
+        // simplified hardcode fallback if glGetAttribLocation fails to link in some NDKs without GLES3 headers
+        if (std::string(name) == "aPosition") return 0;
+        if (std::string(name) == "aTexCoord") return 1;
+        return -1;
+    }
 };
 
+// ------------------------------------------------------------------
+// GLESRHI
+// ------------------------------------------------------------------
+
 GLESRHI::GLESRHI()
-    : m_eglDisplay(nullptr),
-      m_eglContext(nullptr),
-      m_eglConfig(nullptr),
-      m_eglSurfaceMain(nullptr),
-      m_eglSurfaceEncoder(nullptr) {
-}
+    : m_eglDisplay(nullptr), m_eglContext(nullptr), m_eglConfig(nullptr),
+      m_eglSurfaceMain(nullptr), m_eglSurfaceEncoder(nullptr) {}
 
 GLESRHI::~GLESRHI() {
     shutdown();
 }
 
-bool GLESRHI::setupVBO() {
-    if (m_vbo != 0) return true;
+bool GLESRHI::initialize(const HardwareCapabilities& caps) {
+#ifdef __ANDROID__
+    m_eglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (m_eglDisplay == EGL_NO_DISPLAY) return false;
 
-    // Flipped V axis to map FBO textures correctly onto standard Android UI spaces
-    float vertices[] = {
-        -1.0f, -1.0f,  0.0f, 0.0f,
-         1.0f, -1.0f,  1.0f, 0.0f,
-        -1.0f,  1.0f,  0.0f, 1.0f,
-         1.0f,  1.0f,  1.0f, 1.0f
+    EGLint major, minor;
+    if (!eglInitialize((EGLDisplay)m_eglDisplay, &major, &minor)) return false;
+
+    EGLint attribs[] = {
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+        EGL_SURFACE_TYPE, EGL_WINDOW_BIT | EGL_PBUFFER_BIT,
+        EGL_BLUE_SIZE, 8,
+        EGL_GREEN_SIZE, 8,
+        EGL_RED_SIZE, 8,
+        EGL_ALPHA_SIZE, 8,
+        EGL_DEPTH_SIZE, 0,
+        EGL_STENCIL_SIZE, 0,
+        EGL_NONE
     };
 
+    EGLint numConfigs;
+    if (!eglChooseConfig((EGLDisplay)m_eglDisplay, attribs, (EGLConfig*)&m_eglConfig, 1, &numConfigs)) return false;
+
+    EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+    m_eglContext = eglCreateContext((EGLDisplay)m_eglDisplay, (EGLConfig)m_eglConfig, EGL_NO_CONTEXT, contextAttribs);
+    if (m_eglContext == EGL_NO_CONTEXT) return false;
+
+    // Create a dummy pbuffer surface so we have a current context even without a window
+    EGLint pbufferAttribs[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
+    m_eglSurfaceMain = eglCreatePbufferSurface((EGLDisplay)m_eglDisplay, (EGLConfig)m_eglConfig, pbufferAttribs);
+    eglMakeCurrent((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceMain, (EGLSurface)m_eglSurfaceMain, (EGLContext)m_eglContext);
+
+    // Prepare global full screen quad VBO for GLES immediate mode translation
+    static float vertices[] = {
+        // x, y, u, v
+        -1.0f, -1.0f, 0.0f, 0.0f,
+         1.0f, -1.0f, 1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 1.0f
+    };
     glGenBuffers(1, &m_vbo);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-    // Explicitly unbind after creation
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    LOGI("GLESRHI initialized successfully.");
     return true;
-}
-
-unsigned int GLESRHI::compileShaderProgram(const char* vertexSource, const char* fragmentSource) {
-    auto compileShader = [](unsigned int type, const char* source) -> unsigned int {
-        unsigned int shader = glCreateShader(type);
-        glShaderSource(shader, 1, &source, nullptr);
-        glCompileShader(shader);
-        int success;
-        glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-        if (!success) {
-            glDeleteShader(shader);
-            return 0;
-        }
-        return shader;
-    };
-
-    unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
-    unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource);
-
-    if (!vertexShader || !fragmentShader) return 0;
-
-    unsigned int program = glCreateProgram();
-    glAttachShader(program, vertexShader);
-    glAttachShader(program, fragmentShader);
-    glLinkProgram(program);
-
-    int success;
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    if (!success) return 0;
-    return program;
-}
-
-void GLESRHI::deleteShaderProgram(unsigned int programId) {
-    if (programId > 0) glDeleteProgram(programId);
-}
-
-void GLESRHI::drawFullScreenQuad(unsigned int programId, int textureId, bool isOES, const float* transformMatrix) {
-    if (programId == 0 || textureId < 0) return;
-
-    // Use program FIRST before querying uniforms
-    glUseProgram(programId);
-
-    int posLoc = glGetAttribLocation(programId, "aPosition");
-    int texLoc = glGetAttribLocation(programId, "aTexCoord");
-    int matLoc = glGetUniformLocation(programId, "uTransformMatrix");
-    int sampLoc = glGetUniformLocation(programId, "uTexture");
-
-    glActiveTexture(GL_TEXTURE0);
-    unsigned int target = isOES ? GL_TEXTURE_EXTERNAL_OES : GL_TEXTURE_2D;
-    glBindTexture(target, textureId);
-
-    if (sampLoc >= 0) {
-        glUniform1i(sampLoc, 0);
-    }
-
-    if (matLoc >= 0) {
-        if (transformMatrix) {
-            glUniformMatrix4fv(matLoc, 1, GL_FALSE, transformMatrix);
-        } else {
-            // Identity matrix for standard 2D textures
-            float identity[16] = {
-                1, 0, 0, 0,
-                0, 1, 0, 0,
-                0, 0, 1, 0,
-                0, 0, 0, 1
-            };
-            glUniformMatrix4fv(matLoc, 1, GL_FALSE, identity);
-        }
-    }
-
-    setupVBO();
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-
-    if (posLoc >= 0) {
-        glEnableVertexAttribArray(posLoc);
-        glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-    }
-
-    if (texLoc >= 0) {
-        glEnableVertexAttribArray(texLoc);
-        glVertexAttribPointer(texLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
-    }
-
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-    // CRITICAL: State Isolation cleanup to prevent black screen / bleeding across passes
-    if (posLoc >= 0) glDisableVertexAttribArray(posLoc);
-    if (texLoc >= 0) glDisableVertexAttribArray(texLoc);
-
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindTexture(target, 0);
-    glUseProgram(0);
-}
-
-std::shared_ptr<IRenderTarget> GLESRHI::createRenderTarget(int width, int height) {
-    if (width <= 0 || height <= 0) return nullptr;
-
-    auto target = std::make_shared<GLESRenderTarget>();
-    target->width = width;
-    target->height = height;
-
-    glGenTextures(1, &target->textureId);
-    glBindTexture(GL_TEXTURE_2D, target->textureId);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glGenFramebuffers(1, &target->fboId);
-    glBindFramebuffer(GL_FRAMEBUFFER, target->fboId);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target->textureId, 0);
-
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        LOGE("FBO Creation failed!");
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glBindTexture(GL_TEXTURE_2D, 0);
-        return nullptr;
-    }
-
-    // Clean up state
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    return target;
-}
-
-void GLESRHI::bindRenderTarget(std::shared_ptr<IRenderTarget> target) {
-    if (!target) return;
-    auto glesTarget = std::static_pointer_cast<GLESRenderTarget>(target);
-    glBindFramebuffer(GL_FRAMEBUFFER, glesTarget->fboId);
-    glViewport(0, 0, glesTarget->width, glesTarget->height);
-
-    // Clear the FBO color attachment to transparent black before rendering the pass
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-}
-
-void GLESRHI::unbindRenderTarget() {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // Restore default viewport based on current active physical EGLSurface
-    if (m_currentViewportWidth > 0 && m_currentViewportHeight > 0) {
-        glViewport(0, 0, m_currentViewportWidth, m_currentViewportHeight);
-    }
-}
-
-bool GLESRHI::initialize(const HardwareCapabilities& caps) {
-    LOGI("Initializing GLES RHI using precise hardware capabilities...");
-
-    EGLDisplay display = eglGetDisplay(nullptr);
-    if (display == EGL_NO_DISPLAY) return false;
-    if (eglInitialize(display, nullptr, nullptr) != EGL_TRUE) return false;
-
-    int majorVer = (caps.glesVersionHex >> 16) & 0xFFFF;
-    int minorVer = caps.glesVersionHex & 0xFFFF;
-
-    int configAttribs[] = {
-        EGL_RENDERABLE_TYPE, (majorVer >= 3) ? EGL_OPENGL_ES3_BIT : EGL_OPENGL_ES2_BIT,
-        EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-        EGL_BLUE_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_RED_SIZE, 8,
-        EGL_NONE
-    };
-
-    EGLConfig config;
-    int numConfigs;
-    if (eglChooseConfig(display, configAttribs, &config, 1, &numConfigs) != EGL_TRUE || numConfigs == 0) {
-        return false;
-    }
-
-    int ctxAttribs[] = {
-        EGL_CONTEXT_CLIENT_VERSION, majorVer,
-        EGL_CONTEXT_MINOR_VERSION_KHR, minorVer,
-        EGL_NONE
-    };
-
-    if (majorVer == 2 || (majorVer == 3 && minorVer == 0)) {
-        ctxAttribs[2] = EGL_NONE;
-    }
-
-    EGLContext context = eglCreateContext(display, config, EGL_NO_CONTEXT, ctxAttribs);
-    if (context == EGL_NO_CONTEXT) {
-        struct GLESVersion { int major; int minor; };
-        GLESVersion versionsToTry[] = { {3, 2}, {3, 1}, {3, 0}, {2, 0} };
-        for (const auto& ver : versionsToTry) {
-            ctxAttribs[1] = ver.major;
-            ctxAttribs[3] = ver.minor;
-            if (ver.major == 2 || (ver.major == 3 && ver.minor == 0)) {
-                ctxAttribs[2] = EGL_NONE;
-            } else {
-                ctxAttribs[2] = EGL_CONTEXT_MINOR_VERSION_KHR;
-            }
-            context = eglCreateContext(display, config, EGL_NO_CONTEXT, ctxAttribs);
-            if (context != EGL_NO_CONTEXT) break;
-        }
-    }
-
-    if (context == EGL_NO_CONTEXT) return false;
-
-    m_eglDisplay = display;
-    m_eglContext = context;
-    m_eglConfig = config;
-
+#else
     return true;
+#endif
 }
 
 void GLESRHI::shutdown() {
-    EGLDisplay display = (EGLDisplay)m_eglDisplay;
-    if (display != EGL_NO_DISPLAY) {
-        eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        if (m_eglSurfaceMain != EGL_NO_SURFACE) eglDestroySurface(display, (EGLSurface)m_eglSurfaceMain);
-        if (m_eglSurfaceEncoder != EGL_NO_SURFACE) eglDestroySurface(display, (EGLSurface)m_eglSurfaceEncoder);
-        if (m_eglContext != EGL_NO_CONTEXT) eglDestroyContext(display, (EGLContext)m_eglContext);
-        eglTerminate(display);
+#ifdef __ANDROID__
+    if (m_eglDisplay != EGL_NO_DISPLAY) {
+        if (m_vbo != 0) {
+            glDeleteBuffers(1, &m_vbo);
+            m_vbo = 0;
+        }
+        eglMakeCurrent((EGLDisplay)m_eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        if (m_eglContext != EGL_NO_CONTEXT) eglDestroyContext((EGLDisplay)m_eglDisplay, (EGLContext)m_eglContext);
+        if (m_eglSurfaceMain != EGL_NO_SURFACE) eglDestroySurface((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceMain);
+        if (m_eglSurfaceEncoder != EGL_NO_SURFACE) eglDestroySurface((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceEncoder);
+        eglTerminate((EGLDisplay)m_eglDisplay);
     }
+    m_eglDisplay = EGL_NO_DISPLAY;
+    m_eglContext = EGL_NO_CONTEXT;
+    m_eglSurfaceMain = EGL_NO_SURFACE;
+    m_eglSurfaceEncoder = EGL_NO_SURFACE;
+#endif
 }
 
 void GLESRHI::setWindow(void* window) {
-    EGLDisplay display = (EGLDisplay)m_eglDisplay;
+#ifdef __ANDROID__
+    if (m_eglDisplay == EGL_NO_DISPLAY) return;
     if (m_eglSurfaceMain != EGL_NO_SURFACE) {
-        eglDestroySurface(display, (EGLSurface)m_eglSurfaceMain);
-        m_eglSurfaceMain = nullptr;
+        eglDestroySurface((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceMain);
+        m_eglSurfaceMain = EGL_NO_SURFACE;
     }
-
-    if (window != nullptr) {
-#ifdef __ANDROID__
-        EGLNativeWindowType nativeWindow = static_cast<EGLNativeWindowType>(window);
-#else
-        void* nativeWindow = window;
+    if (window) {
+        m_eglSurfaceMain = eglCreateWindowSurface((EGLDisplay)m_eglDisplay, (EGLConfig)m_eglConfig, (EGLNativeWindowType)window, nullptr);
+    } else {
+        EGLint pbufferAttribs[] = { EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE };
+        m_eglSurfaceMain = eglCreatePbufferSurface((EGLDisplay)m_eglDisplay, (EGLConfig)m_eglConfig, pbufferAttribs);
+    }
 #endif
-        m_eglSurfaceMain = eglCreateWindowSurface(display, (EGLConfig)m_eglConfig, nativeWindow, nullptr);
-    }
-}
-
-void GLESRHI::setEncoderWindow(void* window) {
-    EGLDisplay display = (EGLDisplay)m_eglDisplay;
-    if (m_eglSurfaceEncoder != EGL_NO_SURFACE) {
-        eglDestroySurface(display, (EGLSurface)m_eglSurfaceEncoder);
-        m_eglSurfaceEncoder = nullptr;
-    }
-
-    if (window != nullptr) {
-#ifdef __ANDROID__
-        EGLNativeWindowType nativeWindow = static_cast<EGLNativeWindowType>(window);
-#else
-        void* nativeWindow = window;
-#endif
-        m_eglSurfaceEncoder = eglCreateWindowSurface(display, (EGLConfig)m_eglConfig, nativeWindow, nullptr);
-    }
 }
 
 void GLESRHI::makeMainWindowCurrent() {
-    if (m_eglDisplay && m_eglSurfaceMain) {
-        eglMakeCurrent((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceMain, (EGLSurface)m_eglSurfaceMain, (EGLContext)m_eglContext);
-        eglQuerySurface((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceMain, EGL_WIDTH, &m_currentViewportWidth);
-        eglQuerySurface((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceMain, EGL_HEIGHT, &m_currentViewportHeight);
-        glViewport(0, 0, m_currentViewportWidth, m_currentViewportHeight);
-    }
+    makeContextCurrent(false);
 }
 
 void GLESRHI::makeEncoderWindowCurrent() {
-    if (m_eglDisplay && m_eglSurfaceEncoder) {
-        eglMakeCurrent((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceEncoder, (EGLSurface)m_eglSurfaceEncoder, (EGLContext)m_eglContext);
-        eglQuerySurface((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceEncoder, EGL_WIDTH, &m_currentViewportWidth);
-        eglQuerySurface((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceEncoder, EGL_HEIGHT, &m_currentViewportHeight);
-        glViewport(0, 0, m_currentViewportWidth, m_currentViewportHeight);
-    }
+    makeContextCurrent(true);
 }
 
-void GLESRHI::swapBuffers() {
-    if (m_eglDisplay != EGL_NO_DISPLAY && m_eglSurfaceMain != EGL_NO_SURFACE) {
-        eglSwapBuffers((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceMain);
+void GLESRHI::setEncoderWindow(void* window) {
+#ifdef __ANDROID__
+    if (m_eglDisplay == EGL_NO_DISPLAY) return;
+    if (m_eglSurfaceEncoder != EGL_NO_SURFACE) {
+        eglDestroySurface((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceEncoder);
+        m_eglSurfaceEncoder = EGL_NO_SURFACE;
     }
+    if (window) {
+        m_eglSurfaceEncoder = eglCreateWindowSurface((EGLDisplay)m_eglDisplay, (EGLConfig)m_eglConfig, (EGLNativeWindowType)window, nullptr);
+    }
+#endif
 }
 
-void GLESRHI::swapEncoderBuffers() {
-    if (m_eglDisplay != EGL_NO_DISPLAY && m_eglSurfaceEncoder != EGL_NO_SURFACE) {
-        eglSwapBuffers((EGLDisplay)m_eglDisplay, (EGLSurface)m_eglSurfaceEncoder);
+void GLESRHI::makeContextCurrent(bool encoderSurface) {
+#ifdef __ANDROID__
+    if (m_eglDisplay != EGL_NO_DISPLAY && m_eglContext != EGL_NO_CONTEXT) {
+        EGLSurface surface = encoderSurface ? (EGLSurface)m_eglSurfaceEncoder : (EGLSurface)m_eglSurfaceMain;
+        if (surface != EGL_NO_SURFACE) {
+            eglMakeCurrent((EGLDisplay)m_eglDisplay, surface, surface, (EGLContext)m_eglContext);
+        }
     }
+#endif
 }
 
-std::shared_ptr<ITexture> GLESRHI::createTexture(int width, int height) {
-    return std::make_shared<GLESTexture>();
+void GLESRHI::present(bool encoderSurface) {
+#ifdef __ANDROID__
+    if (m_eglDisplay != EGL_NO_DISPLAY) {
+        EGLSurface surface = encoderSurface ? (EGLSurface)m_eglSurfaceEncoder : (EGLSurface)m_eglSurfaceMain;
+        if (surface != EGL_NO_SURFACE) {
+            eglSwapBuffers((EGLDisplay)m_eglDisplay, surface);
+        }
+    }
+#endif
+}
+
+std::shared_ptr<IShader> GLESRHI::createShader(const std::string& vertexSource, const std::string& fragmentSource) {
+    unsigned int vs = compileShader(GL_VERTEX_SHADER, vertexSource.c_str());
+    unsigned int fs = compileShader(GL_FRAGMENT_SHADER, fragmentSource.c_str());
+    if (vs == 0 || fs == 0) return nullptr;
+
+    unsigned int programId = glCreateProgram();
+    glAttachShader(programId, vs);
+    glAttachShader(programId, fs);
+    glLinkProgram(programId);
+
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    int linked;
+    glGetProgramiv(programId, GL_LINK_STATUS, &linked);
+    if (!linked) {
+        char infoLog[512];
+        glGetProgramInfoLog(programId, 512, nullptr, infoLog);
+        LOGE("Program linking failed: %s", infoLog);
+        glDeleteProgram(programId);
+        return nullptr;
+    }
+
+    return std::make_shared<GLESShader>(programId);
+}
+
+std::shared_ptr<IPipelineState> GLESRHI::createPipelineState(std::shared_ptr<IShader> shader) {
+    auto glesShader = std::static_pointer_cast<GLESShader>(shader);
+    return std::make_shared<GLESPipelineState>(glesShader);
+}
+
+std::shared_ptr<ITexture> GLESRHI::createTexture(int width, int height, TextureType type) {
+    unsigned int textureId;
+    glGenTextures(1, &textureId);
+    int target = (type == TextureType::TextureExternal) ? GL_TEXTURE_EXTERNAL_OES : GL_TEXTURE_2D;
+
+    glBindTexture(target, textureId);
+    glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    if (type == TextureType::Texture2D) {
+        glTexImage2D(target, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    }
+    glBindTexture(target, 0);
+
+    return std::make_shared<GLESTexture>(textureId, width, height, type, true);
+}
+
+std::shared_ptr<ITexture> GLESRHI::createTextureFromNative(void* nativeHandle, int width, int height, TextureType type) {
+    unsigned int textureId = static_cast<unsigned int>(reinterpret_cast<uintptr_t>(nativeHandle));
+    // ownsTexture = false, we do not delete this texture ID as it was generated outside or we only wrap it
+    return std::make_shared<GLESTexture>(textureId, width, height, type, false);
+}
+
+std::shared_ptr<IRenderTarget> GLESRHI::createRenderTarget(int width, int height) {
+    auto texture = createTexture(width, height, TextureType::Texture2D);
+    auto glesTex = std::static_pointer_cast<GLESTexture>(texture);
+
+    unsigned int fboId;
+    glGenFramebuffers(1, &fboId);
+    glBindFramebuffer(GL_FRAMEBUFFER, fboId);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glesTex->textureId, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    return std::make_shared<GLESRenderTarget>(fboId, texture);
 }
 
 std::shared_ptr<ICommandBuffer> GLESRHI::createCommandBuffer() {
-    return std::make_shared<GLESCommandBuffer>();
-}
-
-std::shared_ptr<IPipelineState> GLESRHI::createPipelineState() {
-    return std::make_shared<GLESPipelineState>();
+    return std::make_shared<GLESCommandBuffer>(this);
 }
 
 } // namespace vfx

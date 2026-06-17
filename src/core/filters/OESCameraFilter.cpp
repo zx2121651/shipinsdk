@@ -31,24 +31,30 @@ OESCameraFilter::~OESCameraFilter() {
 bool OESCameraFilter::initialize(std::shared_ptr<IRHI> rhi) {
     m_rhi = rhi;
     if (m_rhi) {
-        m_programId = m_rhi->compileShaderProgram(OES_VERTEX_SHADER, OES_FRAGMENT_SHADER);
-        return m_programId != 0;
+        auto shader = m_rhi->createShader(OES_VERTEX_SHADER, OES_FRAGMENT_SHADER);
+        if (shader) {
+            m_pso = m_rhi->createPipelineState(shader);
+            return m_pso != nullptr;
+        }
     }
     return false;
 }
 
 void OESCameraFilter::release() {
-    if (m_rhi && m_programId != 0) {
-        m_rhi->deleteShaderProgram(m_programId);
-        m_programId = 0;
-    }
+    m_pso = nullptr;
+    m_rhi = nullptr;
 }
 
 void OESCameraFilter::process(RenderContext& context) {
-    if (m_rhi && m_programId != 0 && context.inputTextureId >= 0) {
-        // Draw the camera frame.
-        // isOES = true, because the input texture is a CameraX GL_TEXTURE_EXTERNAL_OES.
-        m_rhi->drawFullScreenQuad(m_programId, context.inputTextureId, true, context.transformMatrix);
+    if (m_pso && context.inputTexture && context.cmdBuffer) {
+        context.cmdBuffer->bindPipelineState(m_pso);
+
+        if (context.transformMatrix) {
+            context.cmdBuffer->pushConstants(context.transformMatrix, 16 * sizeof(float));
+        }
+
+        context.cmdBuffer->bindTexture(0, context.inputTexture);
+        context.cmdBuffer->drawFullScreenQuad();
     }
 }
 

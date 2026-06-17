@@ -9,9 +9,12 @@ namespace vfx {
 // Represents context passed between filters during a render pass
 struct RenderContext {
     std::shared_ptr<IRHI> rhi;
-    int inputTextureId = -1;
-    int outputTextureId = -1;
+    std::shared_ptr<ICommandBuffer> cmdBuffer; // The current command buffer being recorded into
+    std::shared_ptr<ITexture> inputTexture;
+
+    // Optional data like OES transform matrix from Android CameraX
     const float* transformMatrix = nullptr;
+
     int width = 0;
     int height = 0;
 };
@@ -26,7 +29,7 @@ public:
     // Called when the filter is removed or engine shuts down
     virtual void release() = 0;
 
-    // Executes the filter logic for a single frame
+    // Records the filter's rendering commands into context.cmdBuffer
     virtual void process(RenderContext& context) = 0;
 };
 

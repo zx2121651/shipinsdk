@@ -5,7 +5,6 @@ namespace vfx {
 
 class GrayscaleFilter : public IFilter {
 public:
-    GrayscaleFilter() = default;
     ~GrayscaleFilter() override;
 
     bool initialize(std::shared_ptr<IRHI> rhi) override;
@@ -14,7 +13,7 @@ public:
 
 private:
     std::shared_ptr<IRHI> m_rhi;
-    unsigned int m_programId = 0;
+    std::shared_ptr<IPipelineState> m_pso;
 };
 
 } // namespace vfx

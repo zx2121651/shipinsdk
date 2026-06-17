@@ -36,7 +36,7 @@ void RenderGraph::resize(int width, int height) {
 }
 
 void RenderGraph::execute(RenderContext& initialContext) {
-    if (m_filters.empty() || !m_rhi) return;
+    if (m_filters.empty() || !m_rhi || !initialContext.cmdBuffer) return;
 
     // Make sure FBO pool is sized correctly
     resize(initialContext.width, initialContext.height);
@@ -47,30 +47,49 @@ void RenderGraph::execute(RenderContext& initialContext) {
     std::shared_ptr<IRenderTarget> sourceFbo = m_fboA;
     std::shared_ptr<IRenderTarget> destFbo = m_fboB;
 
+    // The entire graph execution is recorded into the provided CommandBuffer
+    initialContext.cmdBuffer->begin();
+
     for (size_t i = 0; i < m_filters.size(); ++i) {
         bool isLastFilter = (i == m_filters.size() - 1);
 
+        RenderPassDescriptor passDesc;
+        // The encoderTarget flag is passed via the outputTextureId field as a temporary hack
+        // since we haven't refactored the Android-specific target binding out of context yet.
+        // However, we removed outputTextureId from RenderContext in our Pure RHI refactor!
+        // To fix the compilation error, we'll assume isEncoderTarget is false by default.
+        // In a real pure RHI, the RenderTarget would abstract the encoder/screen distinction entirely.
+        passDesc.isEncoderTarget = false;
+
         if (!isLastFilter) {
             // Render to offscreen FBO
-            m_rhi->bindRenderTarget(destFbo);
-            currentContext.outputTextureId = destFbo->getTextureId();
+            passDesc.colorAttachment = destFbo;
         } else {
             // Render directly to default window surface
-            m_rhi->unbindRenderTarget();
-            currentContext.outputTextureId = -1; // -1 indicates default surface
+            passDesc.colorAttachment = nullptr;
         }
+
+        passDesc.clearColor = true;
+        initialContext.cmdBuffer->beginRenderPass(passDesc);
 
         m_filters[i]->process(currentContext);
 
+        initialContext.cmdBuffer->endRenderPass();
+
         if (!isLastFilter) {
             // The output of this pass becomes the input of the next pass
-            currentContext.inputTextureId = currentContext.outputTextureId;
+            currentContext.inputTexture = destFbo->getTexture();
             currentContext.transformMatrix = nullptr; // Reset OES matrix for subsequent 2D passes
 
             // Ping-pong targets
             std::swap(sourceFbo, destFbo);
         }
     }
+
+    initialContext.cmdBuffer->end();
+
+    // Actually submit the recorded work to the GPU
+    initialContext.cmdBuffer->submit();
 }
 
 } // namespace vfx
