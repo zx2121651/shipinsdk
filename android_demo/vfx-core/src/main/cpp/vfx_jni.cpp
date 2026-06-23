@@ -9,6 +9,7 @@
 #include "vfx_engine/core/RenderGraph.h"
 #include "vfx_engine/core/filters/OESCameraFilter.h"
 #include "vfx_engine/core/filters/GrayscaleFilter.h"
+#include "vfx_engine/core/filters/BeautyFilter.h"
 #include "vfx_engine/rhi/RHI.h"
 #include "vfx_engine/media/MediaEncoder.h"
 #include "vfx_engine/media/AudioCapture.h"
@@ -123,7 +124,12 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
 
             if (!gGraphInitialized) {
                 gRenderGraph->addFilter(std::make_shared<vfx::OESCameraFilter>());
-                gRenderGraph->addFilter(std::make_shared<vfx::GrayscaleFilter>());
+
+                auto beautyFilter = std::make_shared<vfx::BeautyFilter>();
+                beautyFilter->setSmoothing(0.6f);
+                beautyFilter->setWhitening(0.4f);
+                gRenderGraph->addFilter(beautyFilter);
+
                 gGraphInitialized = true;
             }
 
@@ -147,13 +153,14 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
                         ctx.cmdBuffer = gRHI->createCommandBuffer();
 
                         if (gWindow) {
-                            // Note: outputTextureId was removed from RenderContext during pure RHI refactor
+                            ctx.isEncoderTarget = false;
                             gRHI->makeMainWindowCurrent(); // Legacy fallback required until RenderTarget completely abstracts window surfaces
                             gRenderGraph->execute(ctx);
                             gRHI->present(false);
                         }
 
                         if (gMediaEncoder) {
+                            ctx.isEncoderTarget = true;
                             gRHI->makeEncoderWindowCurrent(); // Legacy fallback
                             gRenderGraph->execute(ctx);
                             gMediaEncoder->notifyFrameReady();

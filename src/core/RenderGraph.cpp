@@ -54,12 +54,9 @@ void RenderGraph::execute(RenderContext& initialContext) {
         bool isLastFilter = (i == m_filters.size() - 1);
 
         RenderPassDescriptor passDesc;
-        // The encoderTarget flag is passed via the outputTextureId field as a temporary hack
-        // since we haven't refactored the Android-specific target binding out of context yet.
-        // However, we removed outputTextureId from RenderContext in our Pure RHI refactor!
-        // To fix the compilation error, we'll assume isEncoderTarget is false by default.
-        // In a real pure RHI, the RenderTarget would abstract the encoder/screen distinction entirely.
-        passDesc.isEncoderTarget = false;
+        // Pass down whether we are targeting the screen or the media encoder surface.
+        // In a pure RHI, this would be determined by the specific swapchain/surface bound to the RenderTarget.
+        passDesc.isEncoderTarget = initialContext.isEncoderTarget;
 
         if (!isLastFilter) {
             // Render to offscreen FBO

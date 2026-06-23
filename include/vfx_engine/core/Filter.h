@@ -17,6 +17,8 @@ struct RenderContext {
 
     int width = 0;
     int height = 0;
+
+    bool isEncoderTarget = false; // Indicates if this render pass is destined for the video encoder
 };
 
 class IFilter {

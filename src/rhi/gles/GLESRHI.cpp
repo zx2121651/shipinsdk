@@ -224,15 +224,40 @@ public:
     }
 
     void pushConstants(const void* data, size_t size) override {
-        // Specifically built for the 4x4 float transform matrix from CameraX/OES
+        // Legacy polyfill: we map a 16-float array to whatever uniforms are needed by the shader.
+        // OESCameraFilter needs "uTransformMatrix".
+        // BeautyFilter needs "uTexelSize", "uSmoothing", "uWhitening".
         if (size == 16 * sizeof(float)) {
-            // We copy data to a captured vector so it lives until submit
-            std::vector<float> matrix((const float*)data, (const float*)data + 16);
-            m_commands.push_back([this, matrix]() {
+            std::vector<float> params((const float*)data, (const float*)data + 16);
+            m_commands.push_back([this, params]() {
                 if (m_currentProgram != 0) {
-                    int loc = glGetUniformLocation(m_currentProgram, "uTransformMatrix");
-                    if (loc >= 0) {
-                        glUniformMatrix4fv(loc, 1, GL_FALSE, matrix.data());
+                    int locTransform = glGetUniformLocation(m_currentProgram, "uTransformMatrix");
+                    if (locTransform >= 0) {
+                        glUniformMatrix4fv(locTransform, 1, GL_FALSE, params.data());
+                    }
+
+                    int locTexelSize = glGetUniformLocation(m_currentProgram, "uTexelSize");
+                    if (locTexelSize >= 0) {
+                        // Assuming glUniform2f is available, or use an array. Here we fallback to NDK manual linkage if needed.
+                        // We will map via raw pointer for GLES2 compatibility.
+                        float texelSize[2] = { params[0], params[1] };
+                        typedef void (*glUniform2fv_t)(int, int, const float*);
+                        static auto glUniform2fv_ptr = (glUniform2fv_t)eglGetProcAddress("glUniform2fv");
+                        if (glUniform2fv_ptr) glUniform2fv_ptr(locTexelSize, 1, texelSize);
+                    }
+
+                    int locSmoothing = glGetUniformLocation(m_currentProgram, "uSmoothing");
+                    if (locSmoothing >= 0) {
+                        typedef void (*glUniform1f_t)(int, float);
+                        static auto glUniform1f_ptr = (glUniform1f_t)eglGetProcAddress("glUniform1f");
+                        if (glUniform1f_ptr) glUniform1f_ptr(locSmoothing, params[2]);
+                    }
+
+                    int locWhitening = glGetUniformLocation(m_currentProgram, "uWhitening");
+                    if (locWhitening >= 0) {
+                        typedef void (*glUniform1f_t)(int, float);
+                        static auto glUniform1f_ptr = (glUniform1f_t)eglGetProcAddress("glUniform1f");
+                        if (glUniform1f_ptr) glUniform1f_ptr(locWhitening, params[3]);
                     }
                 }
             });
@@ -249,8 +274,13 @@ public:
             int texLoc = 1; // Better: glGetAttribLocation(m_currentProgram, "aTexCoord");
 
             if (m_currentProgram != 0) {
-                posLoc = glGetAttribLocation(m_currentProgram, "aPosition");
-                texLoc = glGetAttribLocation(m_currentProgram, "aTexCoord");
+                // Use standard GLES API pointer fetching if symbol is not directly linked
+                typedef int (*glGetAttribLocation_t)(unsigned int, const char*);
+                static auto glGetAttribLocation_ptr = (glGetAttribLocation_t)eglGetProcAddress("glGetAttribLocation");
+                if (glGetAttribLocation_ptr) {
+                    posLoc = glGetAttribLocation_ptr(m_currentProgram, "aPosition");
+                    texLoc = glGetAttribLocation_ptr(m_currentProgram, "aTexCoord");
+                }
             }
 
             if (posLoc >= 0) {
@@ -286,13 +316,6 @@ private:
     unsigned int m_currentProgram = 0;
     std::vector<std::function<void()>> m_commands;
 
-    // Polyfill for NDK missing symbols locally
-    int glGetAttribLocation(unsigned int program, const char* name) {
-        // simplified hardcode fallback if glGetAttribLocation fails to link in some NDKs without GLES3 headers
-        if (std::string(name) == "aPosition") return 0;
-        if (std::string(name) == "aTexCoord") return 1;
-        return -1;
-    }
 };
 
 // ------------------------------------------------------------------
