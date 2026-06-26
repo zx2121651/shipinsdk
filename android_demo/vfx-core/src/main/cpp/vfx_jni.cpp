@@ -24,6 +24,7 @@ static std::shared_ptr<vfx::RenderGraph> gRenderGraph = nullptr;
 static std::shared_ptr<vfx::MediaEncoder> gMediaEncoder = nullptr;
 static std::shared_ptr<vfx::AudioCapture> gAudioCapture = nullptr;
 
+static std::shared_ptr<vfx::ITexture> gCameraTexture = nullptr; // Keeps the OES texture alive
 static ANativeWindow* gWindow = nullptr;
 static int gCameraTextureId = -1;
 static int gCameraWidth = 0;
@@ -90,9 +91,10 @@ Java_com_vfx_core_VfxEngine_generateCameraTexture(JNIEnv* env, jobject obj) {
         gRenderThread->postTask([]() {
             if (gRHI && gThreadAttached && gVfxEngineObj) {
                 // In Pure RHI, we delegate texture creation to the RHI layer
-                auto tex = gRHI->createTexture(0, 0, vfx::TextureType::TextureExternal);
-                if (tex) {
-                    gCameraTextureId = static_cast<int>(reinterpret_cast<uintptr_t>(tex->getNativeHandle()));
+                // Store in global so it outlives this scope and isn't deleted immediately by RAII.
+                gCameraTexture = gRHI->createTexture(0, 0, vfx::TextureType::TextureExternal);
+                if (gCameraTexture) {
+                    gCameraTextureId = static_cast<int>(reinterpret_cast<uintptr_t>(gCameraTexture->getNativeHandle()));
                 } else {
                     gCameraTextureId = -1;
                 }
@@ -144,9 +146,8 @@ Java_com_vfx_core_VfxEngine_notifyCameraFrameAvailable(JNIEnv* env, jobject obj)
 
                         vfx::RenderContext ctx;
                         ctx.rhi = gRHI;
-                        // For input we wrap the GL external texture ID via the pure RHI.
-                        // Safe 64-bit cast using uintptr_t.
-                        ctx.inputTexture = gRHI->createTextureFromNative(reinterpret_cast<void*>(static_cast<uintptr_t>(gCameraTextureId)), gCameraWidth, gCameraHeight, vfx::TextureType::TextureExternal);
+                        // We use the globally retained camera texture so it doesn't get destroyed
+                        ctx.inputTexture = gCameraTexture;
                         ctx.transformMatrix = matrixBody;
                         ctx.width = gCameraWidth > 0 ? gCameraWidth : 1280;
                         ctx.height = gCameraHeight > 0 ? gCameraHeight : 720;
@@ -260,6 +261,9 @@ Java_com_vfx_core_VfxEngine_destroy(JNIEnv* env, jobject /* this */) {
             if (gMediaEncoder) {
                 gMediaEncoder->stop();
                 gMediaEncoder = nullptr;
+            }
+            if (gCameraTexture) {
+                gCameraTexture = nullptr;
             }
             if (gRHI) {
                 gRHI->setEncoderWindow(nullptr);
